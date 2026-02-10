@@ -216,3 +216,5 @@ __marimo__/
 data/
 *.pdf
 *.docx
+# ICF pipeline output
+output/
