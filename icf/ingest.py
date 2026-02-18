@@ -9,6 +9,8 @@ Supports:
 import os
 
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
 from icf.types import IndexedProtocol, ProtocolPage
@@ -71,31 +73,44 @@ def load_docx(filepath: str) -> IndexedProtocol:
             current_parts = []
             current_length = 0
 
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
+    from docx.oxml.ns import qn
 
-        # Detect hard page breaks in the paragraph's runs
-        has_page_break = False
-        try:
-            from docx.oxml.ns import qn
+    for block in doc.element.body:
+        tag = block.tag.split("}")[-1] if "}" in block.tag else block.tag
 
-            for run in para.runs:
-                for br in run._element.findall(qn("w:br")):
-                    if br.get(qn("w:type")) == "page":
-                        has_page_break = True
+        if tag == "p":
+            para = Paragraph(block, doc)
+            text = para.text.strip()
+            if not text:
+                continue
+
+            # Detect hard page breaks in the paragraph's runs
+            has_page_break = False
+            try:
+                for run in para.runs:
+                    for br in run._element.findall(qn("w:br")):
+                        if br.get(qn("w:type")) == "page":
+                            has_page_break = True
+                            break
+                    if has_page_break:
                         break
-                if has_page_break:
-                    break
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-        if has_page_break and current_parts:
-            flush_page()
+            if has_page_break and current_parts:
+                flush_page()
 
-        current_parts.append(text)
-        current_length += len(text)
+            current_parts.append(text)
+            current_length += len(text)
+
+        elif tag == "tbl":
+            table = Table(block, doc)
+            for row in table.rows:
+                row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if row_cells:
+                    text = " | ".join(row_cells)
+                    current_parts.append(text)
+                    current_length += len(text)
 
         if current_length >= PAGE_CHAR_LIMIT:
             flush_page()

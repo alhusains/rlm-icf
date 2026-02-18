@@ -151,6 +151,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.venv_vllm/
 
 # Spyder project settings
 .spyderproject
@@ -218,3 +219,4 @@ data/
 *.docx
 # ICF pipeline output
 output/
+models/
