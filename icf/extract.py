@@ -213,7 +213,8 @@ def parse_extraction_json(raw: str) -> dict | None:
       3. JSON inside a markdown code fence
       4. Outermost { ... } containing a "status" key
       5. Any outermost { ... } that parses as valid JSON dict
-      6. Fallback: wrap the raw text as a best-effort PARTIAL result
+      6. Regex field extraction from truncated / malformed JSON
+      7. Fallback: wrap the raw text as a best-effort PARTIAL result
     """
     if not raw:
         return None
@@ -263,7 +264,14 @@ def parse_extraction_json(raw: str) -> dict | None:
     if any_valid is not None:
         return any_valid
 
-    # 6. Fallback: the RLM returned free-form text instead of JSON.
+    # 6. Truncated / malformed JSON: pull individual fields with regex.
+    #    Handles the common case where the LLM output is cut off mid-string
+    #    so balanced braces never close, but the content is still there.
+    partial = _parse_partial_json_fields(raw)
+    if partial is not None:
+        return partial
+
+    # 7. Fallback: the RLM returned free-form text instead of JSON.
     #    Wrap it so the pipeline can still use the content.
     if len(stripped) > 20:
         return {
@@ -294,3 +302,58 @@ def _extract_brace_candidates(text: str) -> list[str]:
                 results.append(text[start : i + 1])
                 start = None
     return results
+
+
+def _unescape_json_str(s: str) -> str:
+    """Decode common JSON string escape sequences."""
+    return (
+        s.replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
+
+
+def _parse_partial_json_fields(raw: str) -> dict | None:
+    """Extract key fields via regex from a truncated or malformed JSON string.
+
+    Called when all standard parse strategies fail (e.g. the LLM output was
+    cut off mid-string so braces never balance).  Recovers as many fields as
+    possible and returns a PARTIAL-status dict.
+    """
+    # Only attempt if the text looks like it contains JSON-style key-value pairs
+    if not re.search(r'"(?:status|answer|filled_template)"', raw):
+        return None
+
+    result: dict = {}
+
+    # Simple enum / id fields — values never contain backslash escapes
+    for key in ("section_id", "status", "confidence"):
+        m = re.search(rf'"{key}"\s*:\s*"([^"\\]*)"', raw)
+        if m:
+            result[key] = m.group(1)
+
+    # Potentially long string fields — must handle JSON escape sequences
+    for key in ("answer", "filled_template", "notes"):
+        # Try a properly closed JSON string first
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+        if m:
+            result[key] = _unescape_json_str(m.group(1))
+        else:
+            # Truncated string: grab whatever is there (still useful)
+            m = re.search(rf'"{key}"\s*:\s*"(.*)', raw, re.DOTALL)
+            if m:
+                result[key] = _unescape_json_str(m.group(1).rstrip())
+
+    # Evidence array — try to parse just that slice
+    ev_m = re.search(r'"evidence"\s*:\s*(\[.*?\])', raw, re.DOTALL)
+    if ev_m:
+        try:
+            result["evidence"] = json.loads(ev_m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if not result:
+        return None
+
+    return result
