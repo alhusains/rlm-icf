@@ -93,7 +93,7 @@ def load_template_registry(csv_path: str) -> list[TemplateVariable]:
 
     variables: list[TemplateVariable] = []
 
-    with open(csv_path, encoding="utf-8") as f:
+    with open(csv_path, encoding="cp1252") as f:
         reader = csv.reader(f)
         _header = next(reader)  # skip header
 

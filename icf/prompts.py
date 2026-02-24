@@ -40,12 +40,12 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         "{\n"
         f'    "section_id": "{var.section_id}",\n'
         '    "status": "FOUND" | "NOT_FOUND" | "PARTIAL",\n'
-        '    "answer": "Extracted text in plain language (Grade 6 reading level)",\n'
         '    "filled_template": "The required text with curly-brace variables filled in",\n'
         '    "evidence": [\n'
         '        {"quote": "Exact verbatim quote from protocol", "page": "Page number"}\n'
         "    ],\n"
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
+        '    "answer": "Extracted text in plain language (Grade 6 reading level)",\n'
         '    "notes": "Any caveats or items needing manual review"\n'
         "}"
     )
