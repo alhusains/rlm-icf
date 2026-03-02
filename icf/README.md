@@ -7,7 +7,7 @@ Automated generation of Informed Consent Forms (ICF) from study protocols using 
 This pipeline automates the drafting of ICFs for clinical trials at UHN. It extracts information from clinical study protocols (50-200 pages of dense medical/legal text) and fills template variables with grounded, human-readable text at a Grade 6-8 reading level.
 
 **Key Features:**
-- **Template-driven extraction**: Fills specific ICF sections based on a structured CSV template
+- **Template-driven extraction**: Fills specific ICF sections based on a structured JSON template registry
 - **Grounded information**: Every extracted claim is backed by verbatim quotes with page numbers
 - **Hallucination prevention**: Explicitly states when information is not found in the protocol
 - **Semantic search**: Uses RLM-powered chunking and LLM queries to find information across varying protocol structures
@@ -21,10 +21,9 @@ The pipeline consists of 6 stages:
 Loads PDF or DOCX protocol files and indexes them with page markers for traceability.
 
 ### 2. Registry (`icf/registry.py`)
-Parses the ICF template breakdown CSV to build a list of variables to extract, including:
+Loads the ICF template breakdown JSON to build a list of variables to extract, including:
 - Section metadata (ID, heading, sub-section)
 - Extraction instructions
-- Protocol mapping hints
 - Complexity classification
 - Availability flags (in protocol, partially in protocol, standard text)
 
@@ -74,7 +73,7 @@ Extract all sections from a protocol:
 ```bash
 uv run python run_pipeline.py \
     --protocol data/Prot_000.pdf \
-    --csv data/standard_ICF_template_breakdown.csv
+    --registry data/standard_ICF_template_breakdown.json
 ```
 
 ### Extract Specific Sections
@@ -84,7 +83,7 @@ Extract only sections 6, 8, 9.1, 9.2:
 ```bash
 uv run python run_pipeline.py \
     --protocol data/Prot_000.pdf \
-    --csv data/standard_ICF_template_breakdown.csv \
+    --registry data/standard_ICF_template_breakdown.json \
     --sections 6 8 9.1 9.2
 ```
 
@@ -95,7 +94,7 @@ See detailed RLM iterations and REPL interactions:
 ```bash
 uv run python run_pipeline.py \
     --protocol data/Prot_000.pdf \
-    --csv data/standard_ICF_template_breakdown.csv \
+    --registry data/standard_ICF_template_breakdown.json \
     --verbose
 ```
 
@@ -103,13 +102,15 @@ uv run python run_pipeline.py \
 
 ```
 --protocol PATH          Path to clinical study protocol (PDF or DOCX)
---csv PATH              Path to ICF template breakdown CSV
---output-dir PATH       Output directory (default: output)
---model NAME            LLM model name (default: gpt-5.1)
---backend NAME          RLM backend (default: openai)
---max-iterations N      Max RLM iterations per variable (default: 20)
---verbose               Enable verbose RLM output
---sections [IDs...]     Extract only these section IDs
+--registry PATH          Path to ICF template registry (.json preferred, .csv legacy)
+--output-dir PATH        Output directory (default: output)
+--model NAME             LLM model name (default: gpt-5.1)
+--backend NAME           RLM backend (default: openai)
+--max-iterations N       Max RLM iterations per variable (default: 20)
+--max-tokens N           Max output tokens per LLM call
+--verbose                Enable verbose RLM output
+--sections [IDs...]      Extract only these section IDs
+--convert-registry       Convert --registry CSV to JSON and exit
 ```
 
 ## Output
@@ -147,22 +148,31 @@ Complete extraction audit trail containing:
 - `reading_grade_level`: Flesch-Kincaid grade level
 - `issues`: List of validation warnings
 
-## Template CSV Format
+## Template Registry Format
 
-The pipeline expects a CSV with the following columns:
+The pipeline reads `data/standard_ICF_template_breakdown.json`. The file has two top-level keys:
 
-| Column | Description |
-|--------|-------------|
-| `Section ID` | Unique identifier (e.g., "6", "9.1") |
-| `Heading` | Section heading in ICF |
-| `Sub-Section` | Sub-section name (or "N/A") |
-| `Instructions for Filling` | Extraction instructions for the RLM |
-| `Required Text in ICF Template` | ICF template text with `{{ variables }}` |
-| `Suggested Text` | Suggested phrasing |
-| `UHN Protocol Section` | Hints for where to find info in UHN protocols |
-| `Sponsor Protocol Section` | Hints for sponsor protocol sections |
-| `Complexity` | Extraction complexity (Easy, Moderate mapping complexity, Complex mapping, Potentially in protocol) |
-| `Conventionally in protocol?` | "Yes", "No", or "Partially" |
+- **`schema`** — human-readable documentation of every field and text-markup symbol
+- **`sections`** — array of section objects
+
+Each section object contains:
+
+| Field | Description |
+|-------|-------------|
+| `section_id` | Unique identifier (e.g., `"6"`, `"9.1.2"`) |
+| `heading` | UPPERCASE section heading as it appears in the ICF |
+| `sub_section` | Sub-section name, or `null` |
+| `required` | `true` = must be included; `false` = include only if relevant |
+| `complexity` | Tags driving iteration budget and availability flags |
+| `is_in_protocol` | Whether the info is expected in the study protocol |
+| `partially_in_protocol` | Whether only some fields come from the protocol |
+| `is_standard_text` | Whether `required_text` is boilerplate needing no extraction |
+| `instructions` | Author-facing extraction directions |
+| `required_text` | Mandated ICF wording with `{{placeholders}}` |
+| `suggested_text` | Sample language with `<conditions>`, `<<blocks>>`, and `OR` alternatives |
+| `suggested_text_format` | `"text"` (default) or `"html"` for table content |
+| `adaptation_notes` | Runtime field — set by the dynamic-adaptation pass; `null` in base registry |
+
 
 ## Iteration Budgets
 
