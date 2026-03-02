@@ -35,7 +35,7 @@ class ICFPipeline:
     def __init__(
         self,
         protocol_path: str,
-        template_csv_path: str,
+        template_path: str,
         template_docx_path: str | None = None,
         output_dir: str = "output",
         model_name: str = "gpt-5.1",
@@ -46,7 +46,7 @@ class ICFPipeline:
         section_filter: list[str] | None = None,
     ):
         self.protocol_path = protocol_path
-        self.template_csv_path = template_csv_path
+        self.template_path = template_path
         self.template_docx_path = template_docx_path
         self.output_dir = output_dir
         self.model_name = model_name
@@ -69,8 +69,8 @@ class ICFPipeline:
         print(f"[INGEST] Loaded: {protocol.total_pages} pages, {len(protocol.full_text):,} chars.")
 
         # -- Stage 2: Registry -----------------------------------------------
-        print(f"[REGISTRY] Loading template from {self.template_csv_path} ...")
-        all_variables = load_template_registry(self.template_csv_path)
+        print(f"[REGISTRY] Loading template from {self.template_path} ...")
+        all_variables = load_template_registry(self.template_path)
         print(f"[REGISTRY] Loaded {len(all_variables)} template sections.")
 
         # Optional section filter

@@ -57,13 +57,6 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         f"WHAT TO EXTRACT: {var.instructions}\n\n"
     )
 
-    if var.protocol_mapping or var.sponsor_mapping:
-        prompt += (
-            "WHERE TO LOOK (hints - actual section names vary between protocols):\n"
-            f"  Protocol sections: {var.protocol_mapping}\n"
-            f"  Sponsor sections: {var.sponsor_mapping}\n\n"
-        )
-
     prompt += f"{availability}\n\n"
 
     if var.required_text:

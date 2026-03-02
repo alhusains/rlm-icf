@@ -46,15 +46,16 @@ class TemplateVariable:
     required: bool
     instructions: str
     required_text: str
+    # Plain text or HTML string; check suggested_text_format to know which.
     suggested_text: str
     complexity: list[str]
-    protocol_mapping: str
-    sponsor_mapping: str
     is_in_protocol: bool
     partially_in_protocol: bool
     is_standard_text: bool
-    notes: str
-    csv_status: str
+    # "text" (default) or "html" — allows rich table content in JSON registry.
+    suggested_text_format: str = "text"
+    # Injected at runtime by the dynamic-adaptation pass (None = no override).
+    adaptation_notes: str | None = None
 
     def get_display_name(self) -> str:
         name = f"[{self.section_id}] {self.heading}"

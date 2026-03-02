@@ -1,18 +1,33 @@
 """
-Parse the ICF template breakdown CSV into a structured variable registry.
+ICF template registry loader.
 
-Handles:
-  - Complexity classification (easy/moderate/complex, in/not-in protocol)
-  - HTML entity decoding (CSV may contain &lt; &gt; etc.)
-  - Required vs optional detection
+Supports two source formats:
+  - CSV  (legacy)  : data/standard_ICF_template_breakdown.csv
+  - JSON (canonical): data/standard_ICF_template_breakdown.json
+
+Use ``convert_csv_to_json`` once to produce the JSON file, then always
+point the pipeline at the JSON.  The JSON format:
+  - Preserves all fields exactly (no re-parsing needed each run)
+  - Supports ``suggested_text_format`` = "text" | "html" so rich table
+    content can be stored in ``suggested_text`` without CSV cell limitations
+  - Is human-editable for manual refinements or future dynamic patching
+
+``load_template_registry(path)`` auto-detects CSV vs JSON from the
+file extension, so existing callers need no changes.
 """
 
 import ast
 import csv
 import html
+import json
 import os
 
 from icf.types import TemplateVariable
+
+
+# ======================================================================
+# Internal helpers (CSV parsing)
+# ======================================================================
 
 
 def _parse_complexity(raw: str) -> list[str]:
@@ -64,11 +79,15 @@ def _parse_required(raw: str) -> bool:
         return True
     if lower.startswith("optional"):
         return False
-    # Default: treat "Required" keyword presence as True
     return "required" in lower and "optional" not in lower
 
 
-def load_template_registry(csv_path: str) -> list[TemplateVariable]:
+# ======================================================================
+# CSV loader (internal — call load_template_registry() from outside)
+# ======================================================================
+
+
+def _load_template_registry_csv(csv_path: str) -> list[TemplateVariable]:
     """Parse the ICF template breakdown CSV into TemplateVariable objects.
 
     Expected CSV columns (by index):
@@ -113,9 +132,6 @@ def load_template_registry(csv_path: str) -> list[TemplateVariable]:
             instructions = html.unescape(row[6].strip())
             required_text = html.unescape(row[7].strip())
             suggested_text = html.unescape(row[8].strip()) if len(row) > 8 else ""
-            protocol_mapping = html.unescape(row[11].strip()) if len(row) > 11 else ""
-            sponsor_mapping = html.unescape(row[12].strip()) if len(row) > 12 else ""
-            notes = html.unescape(row[14].strip()) if len(row) > 14 else ""
 
             complexity = _parse_complexity(complexity_raw)
             is_in, partial, standard = _classify_availability(complexity)
@@ -130,14 +146,11 @@ def load_template_registry(csv_path: str) -> list[TemplateVariable]:
                     instructions=instructions,
                     required_text=required_text,
                     suggested_text=suggested_text,
+                    suggested_text_format="text",
                     complexity=complexity,
-                    protocol_mapping=protocol_mapping,
-                    sponsor_mapping=sponsor_mapping,
                     is_in_protocol=is_in,
                     partially_in_protocol=partial,
                     is_standard_text=standard,
-                    notes=notes,
-                    csv_status=csv_status,
                 )
             )
 
@@ -145,3 +158,120 @@ def load_template_registry(csv_path: str) -> list[TemplateVariable]:
         raise ValueError(f"No variables loaded from CSV: {csv_path}")
 
     return variables
+
+
+# ======================================================================
+# JSON loader
+# ======================================================================
+
+
+def load_template_registry_json(json_path: str) -> list[TemplateVariable]:
+    """Load a pre-converted JSON template registry.
+
+    Accepts two root formats:
+      - Array   (legacy v1): ``[{...}, ...]``
+      - Object  (v2):        ``{"schema": {...}, "sections": [{...}, ...]}``
+
+    The JSON file is produced by ``convert_csv_to_json`` and may be
+    manually edited afterwards to add rich content (e.g. HTML tables in
+    ``suggested_text`` with ``suggested_text_format`` = "html").
+    """
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"Template JSON not found: {json_path}")
+
+    with open(json_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Support both root formats
+    items: list[dict] = data if isinstance(data, list) else data["sections"]
+
+    variables: list[TemplateVariable] = []
+    for item in items:
+        variables.append(
+            TemplateVariable(
+                section_id=item["section_id"],
+                heading=item["heading"],
+                sub_section=item.get("sub_section"),
+                required=item["required"],
+                instructions=item["instructions"],
+                required_text=item["required_text"],
+                suggested_text=item["suggested_text"],
+                suggested_text_format=item.get("suggested_text_format", "text"),
+                complexity=item["complexity"],
+                is_in_protocol=item["is_in_protocol"],
+                partially_in_protocol=item["partially_in_protocol"],
+                is_standard_text=item["is_standard_text"],
+            )
+        )
+
+    if not variables:
+        raise ValueError(f"No variables loaded from JSON: {json_path}")
+
+    return variables
+
+
+# ======================================================================
+# Conversion utility  (run once: CSV -> JSON)
+# ======================================================================
+
+
+def convert_csv_to_json(csv_path: str, json_path: str) -> None:
+    """Convert the legacy CSV registry to the canonical JSON format.
+
+    Run this once after any CSV update; commit the resulting JSON file and
+    point the pipeline at it going forward.
+
+    Rich content (e.g. HTML tables) can be added manually to the JSON
+    afterwards by setting ``suggested_text_format`` to ``"html"`` and
+    placing an HTML string in ``suggested_text``.
+    """
+    variables = _load_template_registry_csv(csv_path)
+
+    sections = []
+    for v in variables:
+        sections.append(
+            {
+                "section_id": v.section_id,
+                "heading": v.heading,
+                "sub_section": v.sub_section if v.sub_section != "N/A" else None,
+                "required": v.required,
+                "complexity": v.complexity,
+                "is_in_protocol": v.is_in_protocol,
+                "partially_in_protocol": v.partially_in_protocol,
+                "is_standard_text": v.is_standard_text,
+                "instructions": v.instructions,
+                # Normalize legacy "N/A - see suggested text" / "N/A" → ""
+                "required_text": (
+                    ""
+                    if v.required_text.strip() in ("N/A - see suggested text", "N/A")
+                    else v.required_text
+                ),
+                "suggested_text": v.suggested_text,
+                # "text" for now; change to "html" and insert <table> markup manually
+                # when rich table content is needed for a section.
+                "suggested_text_format": "text",
+            }
+        )
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({"sections": sections}, f, indent=2, ensure_ascii=False)
+
+    print(f"Converted {len(sections)} sections -> {json_path}")
+
+
+# ======================================================================
+# Public entry point  (auto-detects CSV vs JSON)
+# ======================================================================
+
+
+def load_template_registry(path: str) -> list[TemplateVariable]:
+    """Load the ICF template registry from a CSV or JSON file.
+
+    File type is inferred from the extension:
+      .json  -> load_template_registry_json (fast, no re-parsing)
+      .csv   -> _load_template_registry_csv  (legacy, parses every run)
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".json":
+        return load_template_registry_json(path)
+    return _load_template_registry_csv(path)
