@@ -13,6 +13,47 @@ import re
 from icf.prompts import build_extraction_prompt
 from icf.types import Evidence, ExtractionResult, TemplateVariable
 from rlm import RLM
+from rlm.utils.prompts import RLM_SYSTEM_PROMPT
+
+
+def _build_icf_system_prompt(protocol_length: int) -> str:
+    """Return a system prompt that corrects the LLM's execution-model misconceptions.
+
+    The base RLM_SYSTEM_PROMPT is good but newer models sometimes believe the
+    REPL requires user-side activation ("please say 'continue'", "BEGIN REPL",
+    etc.) or invoke imaginary policies to refuse writing code.  This addendum
+    makes the following unambiguous:
+      1. context_0 IS already loaded — here is its exact size.
+      2. ```repl blocks the LLM writes are auto-executed; no user confirmation needed.
+      3. Every 'Code executed' block in the message history is a REAL execution result.
+      4. There is no policy against writing repl blocks or doing step-by-step reasoning.
+      5. When the answer is ready, call FINAL_VAR immediately — no prose summaries.
+    """
+    addendum = (
+        "\n\n=== ICF EXTRACTION OPERATIONAL RULES (MANDATORY) ===\n"
+        f"context_0 is LOADED with {protocol_length:,} characters of the clinical study "
+        "protocol text. It is available RIGHT NOW — you do not need to load it, ask for it, "
+        "or wait for any signal.\n\n"
+        "EXECUTION MODEL:\n"
+        "  • YOU write ```repl code blocks in YOUR response.\n"
+        "  • The automation framework AUTOMATICALLY executes every ```repl block you write.\n"
+        "  • You see the output in the NEXT message. There is NO human in the loop.\n"
+        "  • Every 'Code executed:' block already in this conversation is a REAL Python\n"
+        "    execution result — not simulated, not from a 'different environment'.\n\n"
+        "PROHIBITED RESPONSES — never write any of the following:\n"
+        "  ✗ 'The REPL is not active / not available in this interface'\n"
+        "  ✗ 'Please send a ```repl block' / 'say continue' / 'BEGIN REPL'\n"
+        "  ✗ 'OpenAI policy prohibits chain-of-thought / tool use'\n"
+        "  ✗ 'I cannot continue' / 'I'm sorry, I cannot assist with that'\n"
+        "  ✗ Any prose-only response when you still have iterations remaining\n"
+        "  If you feel an urge to write any of the above, write a ```repl block instead.\n\n"
+        "FINISHING:\n"
+        "  Once you have gathered enough information, build a result_json dict in the REPL\n"
+        "  and call FINAL_VAR(result_json). Do NOT write a prose 'FINAL ANSWER' block —\n"
+        "  use FINAL_VAR so the framework can parse the structured result.\n"
+        "  FIRST-RESPONSE RULE: Your very first response MUST contain a ```repl block.\n"
+    )
+    return RLM_SYSTEM_PROMPT + addendum
 
 
 class ExtractionEngine:
@@ -44,6 +85,9 @@ class ExtractionEngine:
           - not in protocol -> return SKIPPED
           - otherwise -> run RLM extraction
         """
+        if variable.adaptation_skipped:
+            return self._make_adaptation_skipped_result(variable)
+
         if variable.is_standard_text:
             return self._make_standard_result(variable)
 
@@ -62,7 +106,7 @@ class ExtractionEngine:
         variable: TemplateVariable,
     ) -> ExtractionResult:
         max_iter = self._iterations_for(variable)
-        root_prompt = build_extraction_prompt(variable)
+        root_prompt = build_extraction_prompt(variable, protocol_length=len(protocol_text))
 
         kwargs = {"model_name": self.model_name}
         kwargs.update(self.backend_kwargs)
@@ -74,6 +118,7 @@ class ExtractionEngine:
                 environment="local",
                 verbose=self.verbose,
                 max_iterations=max_iter,
+                custom_system_prompt=_build_icf_system_prompt(len(protocol_text)),
             )
 
             completion = rlm.completion(
@@ -164,6 +209,24 @@ class ExtractionEngine:
             evidence=[],
             confidence="HIGH",
             notes="Standard required text - no extraction needed.",
+        )
+
+    @staticmethod
+    def _make_adaptation_skipped_result(variable: TemplateVariable) -> ExtractionResult:
+        reason = (
+            variable.adaptation_notes
+            or "Marked as not applicable for this study by adaptation pass."
+        )
+        return ExtractionResult(
+            section_id=variable.section_id,
+            heading=variable.heading,
+            sub_section=variable.sub_section,
+            status="ADAPTATION_SKIPPED",
+            answer="",
+            filled_template="",
+            evidence=[],
+            confidence="N/A",
+            notes=reason,
         )
 
     @staticmethod
@@ -306,12 +369,7 @@ def _extract_brace_candidates(text: str) -> list[str]:
 
 def _unescape_json_str(s: str) -> str:
     """Decode common JSON string escape sequences."""
-    return (
-        s.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace('\\"', '"')
-        .replace("\\\\", "\\")
-    )
+    return s.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
 
 
 def _parse_partial_json_fields(raw: str) -> dict | None:
