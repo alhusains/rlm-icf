@@ -85,7 +85,46 @@ def main() -> int:
     parser.add_argument(
         "--backend",
         default="openai",
-        help="RLM backend (default: openai).",
+        help=(
+            "RLM backend (default: openai). "
+            "Choices: openai | azure_openai | vllm. "
+            "Use 'azure_openai' for Azure AI Foundry deployments; "
+            "use 'vllm' for local vLLM servers."
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help=(
+            "Base URL for the LLM API endpoint. Required when --backend vllm "
+            "(e.g. http://localhost:8005/v1). Also works with any OpenAI-compatible server."
+        ),
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help=(
+            "API key for the LLM backend. For local vLLM servers use any non-empty "
+            "string (e.g. 'EMPTY'). Defaults to the OPENAI_API_KEY env var for openai backend."
+        ),
+    )
+    parser.add_argument(
+        "--azure-endpoint",
+        default=None,
+        help=(
+            "Azure OpenAI endpoint URL (e.g. https://rebicf.openai.azure.com/). "
+            "Only used with --backend azure_openai. "
+            "Defaults to the AZURE_OPENAI_ENDPOINT env var."
+        ),
+    )
+    parser.add_argument(
+        "--azure-deployment",
+        default=None,
+        help=(
+            "Azure deployment name (e.g. gpt-5-chat). "
+            "Only used with --backend azure_openai. "
+            "Defaults to the AZURE_OPENAI_DEPLOYMENT env var."
+        ),
     )
     parser.add_argument(
         "--max-iterations",
@@ -135,6 +174,14 @@ def main() -> int:
     backend_kwargs: dict = {}
     if args.max_tokens is not None:
         backend_kwargs["max_tokens"] = args.max_tokens
+    if args.base_url is not None:
+        backend_kwargs["base_url"] = args.base_url
+    if args.api_key is not None:
+        backend_kwargs["api_key"] = args.api_key
+    if args.azure_endpoint is not None:
+        backend_kwargs["azure_endpoint"] = args.azure_endpoint
+    if args.azure_deployment is not None:
+        backend_kwargs["azure_deployment"] = args.azure_deployment
 
     pipeline = ICFPipeline(
         protocol_path=args.protocol,
