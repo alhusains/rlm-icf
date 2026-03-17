@@ -1,12 +1,25 @@
 """
 ICF Pipeline orchestrator.
 
-Coordinates all stages: ingest -> registry -> extract -> validate -> assemble.
+Coordinates all stages: ingest -> registry -> extract -> adapt -> validate -> assemble.
+
+Extraction runs in two phases:
+  Phase A  Extract "trigger" sections (Introduction §3, Why Is This Study
+           Being Done §6) first.
+  Adapt    A lightweight LLM pass reviews the trigger-section content and
+           marks irrelevant optional sections as adaptation_skipped so they
+           are neither extracted nor written to the draft ICF.
+  Phase B  Extract all remaining sections using the adapted registry.
+
+The adapted registry is saved to <output_dir>/adapted_registry.json after
+every run so the adaptation decisions are auditable.
 """
 
+import json
 import os
 import time
 
+from icf.adapt import ADAPTATION_TRIGGER_IDS, build_adapted_registry
 from icf.assemble import generate_draft_docx, generate_report_json
 from icf.extract import ExtractionEngine
 from icf.ingest import load_protocol
@@ -14,6 +27,7 @@ from icf.registry import load_template_registry
 from icf.types import (
     ExtractionResult,
     PipelineResult,
+    TemplateVariable,
     ValidationResult,
 )
 from icf.validate import validate_extractions
@@ -26,7 +40,7 @@ class ICFPipeline:
 
         pipeline = ICFPipeline(
             protocol_path="data/Prot_000.pdf",
-            template_csv_path="data/standard_ICF_template_breakdown.csv",
+            template_path="data/standard_ICF_template_breakdown.json",
         )
         result = pipeline.run()
         ICFPipeline.print_summary(result)
@@ -93,12 +107,7 @@ class ICFPipeline:
             f"{len(skippable)} will be skipped (not in protocol)."
         )
 
-        # -- Stages 3+4: Extract ---------------------------------------------
-        print(
-            f"\n[EXTRACT] Starting extraction  model={self.model_name}  "
-            f"backend={self.backend}  max_iter={self.max_iterations}"
-        )
-
+        # -- Stage 3+4+5: Two-phase extract with adaptation ------------------
         engine = ExtractionEngine(
             model_name=self.model_name,
             backend=self.backend,
@@ -107,33 +116,79 @@ class ICFPipeline:
             verbose=self.verbose,
         )
 
-        extractions: list[ExtractionResult] = []
+        # Split variables into trigger (adaptation seeds) and the rest.
+        trigger_ids_in_run = ADAPTATION_TRIGGER_IDS & {v.section_id for v in variables}
+        trigger_vars = [v for v in variables if v.section_id in trigger_ids_in_run]
+        non_trigger_vars = [v for v in variables if v.section_id not in trigger_ids_in_run]
+
         total = len(variables)
+        extractions: list[ExtractionResult] = []
+        idx = 0  # running display counter
 
         try:
-            for i, var in enumerate(variables, start=1):
-                display = var.get_display_name()
-                label = var.get_complexity_label()
-
-                if var.is_standard_text:
-                    print(f"[EXTRACT] [{i}/{total}] STD_TEXT: {display}")
-                elif not var.is_in_protocol and not var.partially_in_protocol:
-                    print(f"[EXTRACT] [{i}/{total}] SKIP: {display} (Not in protocol)")
-                else:
-                    print(f"[EXTRACT] [{i}/{total}] Extracting: {display} ({label}) ...")
-
+            # -- Phase A: trigger sections (Introduction + Why Is This Study Done)
+            if trigger_vars:
+                print(
+                    f"\n[EXTRACT] Phase A: {len(trigger_vars)} trigger section(s) "
+                    f"(adaptation seeds: {sorted(trigger_ids_in_run)})"
+                )
+            early_results: list[ExtractionResult] = []
+            for var in trigger_vars:
+                idx += 1
+                self._print_pre_extraction(idx, total, var)
                 result = engine.extract_variable(protocol.full_text, var)
                 extractions.append(result)
+                early_results.append(result)
+                self._print_extraction_status(idx, total, result)
 
-                self._print_extraction_status(i, total, result)
+            # -- Adaptation pass
+            if trigger_vars and early_results:
+                n_optional = sum(1 for v in non_trigger_vars if not v.required)
+                print(
+                    f"\n[ADAPT] Running adaptation pass "
+                    f"({n_optional} optional candidate section(s)) ..."
+                )
+                adapted_non_trigger = build_adapted_registry(
+                    variables=non_trigger_vars,
+                    early_results=early_results,
+                    model_name=self.model_name,
+                    backend=self.backend,
+                    backend_kwargs=self.backend_kwargs,
+                )
+                n_skipped = sum(1 for v in adapted_non_trigger if v.adaptation_skipped)
+                print(f"[ADAPT] {n_skipped} optional section(s) marked for skipping.")
+            else:
+                adapted_non_trigger = non_trigger_vars
+
+            # Merge adaptations back so all_variables stays intact for the DOCX
+            adapted_map: dict[str, TemplateVariable] = {v.section_id: v for v in trigger_vars}
+            adapted_map.update({v.section_id: v for v in adapted_non_trigger})
+            final_variables = [adapted_map.get(v.section_id, v) for v in all_variables]
+
+            # Save the adapted registry for transparency / auditing
+            os.makedirs(self.output_dir, exist_ok=True)
+            self._save_adapted_registry(list(adapted_map.values()), self.output_dir)
+
+            # -- Phase B: remaining sections (using adapted registry)
+            if non_trigger_vars:
+                print(f"\n[EXTRACT] Phase B: {len(adapted_non_trigger)} remaining section(s)")
+            for var in adapted_non_trigger:
+                idx += 1
+                self._print_pre_extraction(idx, total, var)
+                result = engine.extract_variable(protocol.full_text, var)
+                extractions.append(result)
+                self._print_extraction_status(idx, total, result)
 
         except KeyboardInterrupt:
             print(
                 f"\n[EXTRACT] Interrupted after {len(extractions)}/{total} "
                 "sections. Saving partial results ..."
             )
+            # Ensure final_variables is defined even on early exit
+            if "final_variables" not in dir():
+                final_variables = all_variables
 
-        # -- Stage 5: Validate -----------------------------------------------
+        # -- Stage 6: Validate -----------------------------------------------
         print(f"\n[VALIDATE] Validating {len(extractions)} extractions ...")
         validations = validate_extractions(extractions, protocol.full_text)
 
@@ -141,7 +196,7 @@ class ICFPipeline:
         fully_verified = sum(1 for v in validations if v.quotes_verified and all(v.quotes_verified))
         print(f"[VALIDATE] {fully_verified} fully verified, {total_issues} issues found.")
 
-        # -- Stage 6: Assemble -----------------------------------------------
+        # -- Stage 7: Assemble -----------------------------------------------
         os.makedirs(self.output_dir, exist_ok=True)
 
         elapsed = time.time() - wall_start
@@ -151,7 +206,7 @@ class ICFPipeline:
         json_path = os.path.join(self.output_dir, "extraction_report.json")
 
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
-        generate_draft_docx(extractions, validations, all_variables, docx_path)
+        generate_draft_docx(extractions, validations, final_variables, docx_path)
 
         print(f"[ASSEMBLE] Writing report    -> {json_path}")
         generate_report_json(extractions, validations, summary, json_path)
@@ -172,9 +227,22 @@ class ICFPipeline:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _print_pre_extraction(idx: int, total: int, var: TemplateVariable) -> None:
+        display = var.get_display_name()
+        label = var.get_complexity_label()
+        if var.adaptation_skipped:
+            print(f"[EXTRACT] [{idx}/{total}] ADAPT_SKIP: {display}")
+        elif var.is_standard_text:
+            print(f"[EXTRACT] [{idx}/{total}] STD_TEXT: {display}")
+        elif not var.is_in_protocol and not var.partially_in_protocol:
+            print(f"[EXTRACT] [{idx}/{total}] SKIP: {display} (Not in protocol)")
+        else:
+            print(f"[EXTRACT] [{idx}/{total}] Extracting: {display} ({label}) ...")
+
+    @staticmethod
     def _print_extraction_status(idx: int, total: int, ext: ExtractionResult) -> None:
-        if ext.status == "SKIPPED":
-            print(f"[EXTRACT] [{idx}/{total}]  -> SKIPPED")
+        if ext.status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+            print(f"[EXTRACT] [{idx}/{total}]  -> {ext.status}")
         elif ext.status == "STANDARD_TEXT":
             print(f"[EXTRACT] [{idx}/{total}]  -> STANDARD_TEXT")
         elif ext.status == "ERROR":
@@ -187,18 +255,38 @@ class ICFPipeline:
             )
 
     @staticmethod
+    def _save_adapted_registry(variables: list[TemplateVariable], output_dir: str) -> None:
+        """Write a concise JSON summary of adaptation decisions to the output dir."""
+        path = os.path.join(output_dir, "adapted_registry.json")
+        data = [
+            {
+                "section_id": v.section_id,
+                "heading": v.heading,
+                "sub_section": v.sub_section,
+                "required": v.required,
+                "adaptation_skipped": v.adaptation_skipped,
+                "adaptation_notes": v.adaptation_notes,
+            }
+            for v in sorted(variables, key=lambda v: v.section_id)
+        ]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"[ADAPT] Adapted registry saved -> {path}")
+
+    @staticmethod
     def _build_summary(
         extractions: list[ExtractionResult],
         validations: list[ValidationResult],
         elapsed: float,
     ) -> dict:
         total = len(extractions)
-        counts = {
+        counts: dict[str, int] = {
             "FOUND": 0,
             "PARTIAL": 0,
             "NOT_FOUND": 0,
             "SKIPPED": 0,
             "STANDARD_TEXT": 0,
+            "ADAPTATION_SKIPPED": 0,
             "ERROR": 0,
         }
         for e in extractions:
@@ -211,6 +299,7 @@ class ICFPipeline:
             "not_found": counts["NOT_FOUND"],
             "skipped": counts["SKIPPED"],
             "standard_text": counts["STANDARD_TEXT"],
+            "adaptation_skipped": counts["ADAPTATION_SKIPPED"],
             "errors": counts["ERROR"],
             "validation_issues": sum(len(v.issues) for v in validations),
             "elapsed_seconds": round(elapsed, 1),
@@ -223,15 +312,16 @@ class ICFPipeline:
         print(f"\n{sep}")
         print("ICF PIPELINE SUMMARY")
         print(sep)
-        print(f"  Total sections:   {s['total_sections']}")
-        print(f"  FOUND:            {s['found']}")
-        print(f"  PARTIAL:          {s['partial']}")
-        print(f"  NOT_FOUND:        {s['not_found']}")
-        print(f"  SKIPPED:          {s['skipped']}")
-        print(f"  STANDARD_TEXT:    {s['standard_text']}")
-        print(f"  ERRORS:           {s['errors']}")
-        print(f"  Validation issues:{s['validation_issues']}")
-        print(f"  Wall time:        {s['elapsed_seconds']}s")
+        print(f"  Total sections:      {s['total_sections']}")
+        print(f"  FOUND:               {s['found']}")
+        print(f"  PARTIAL:             {s['partial']}")
+        print(f"  NOT_FOUND:           {s['not_found']}")
+        print(f"  SKIPPED:             {s['skipped']}")
+        print(f"  STANDARD_TEXT:       {s['standard_text']}")
+        print(f"  ADAPTATION_SKIPPED:  {s.get('adaptation_skipped', 0)}")
+        print(f"  ERRORS:              {s['errors']}")
+        print(f"  Validation issues:   {s['validation_issues']}")
+        print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
         if result.output_docx_path:
             print(f"  Draft ICF:  {result.output_docx_path}")
