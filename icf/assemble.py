@@ -8,6 +8,7 @@ Produces two artefacts:
 
 import html as html_mod
 import json
+import re
 from typing import Any
 
 from docx import Document
@@ -64,6 +65,15 @@ def generate_draft_docx(
         ext = ext_map.get(var.section_id)
         val = val_map.get(var.section_id)
 
+        # Omit optional sections that were not found / not applicable.
+        # Required sections always appear so the human reviewer knows to fill them.
+        if (
+            ext is not None
+            and ext.status in ("NOT_FOUND", "SKIPPED", "ADAPTATION_SKIPPED")
+            and not var.required
+        ):
+            continue
+
         # Section heading
         level = 2 if var.sub_section else 1
         heading_text = var.heading
@@ -82,6 +92,7 @@ def generate_draft_docx(
             "STANDARD_TEXT": _GREEN,
             "NOT_FOUND": _RED,
             "SKIPPED": _GREY,
+            "ADAPTATION_SKIPPED": _GREY,
             "ERROR": _RED,
         }.get(ext.status, _GREY)
         badge = f"Status: {ext.status}"
@@ -102,12 +113,13 @@ def generate_draft_docx(
                 _style_run(r, size=9, colour=_ORANGE, italic=True)
 
         elif ext.status in ("NOT_FOUND", "SKIPPED"):
+            # Required section could not be filled — flag it prominently.
             p = doc.add_paragraph()
             r = p.add_run("[TO BE FILLED MANUALLY]")
             _style_run(r, size=11, colour=_RED, bold=True)
             if var.suggested_text:
                 sg = doc.add_paragraph()
-                sr = sg.add_run("Suggested text: " + html_mod.unescape(var.suggested_text[:800]))
+                sr = sg.add_run("Suggested text: " + _plain_suggested_text(var)[:800])
                 _style_run(sr, size=9, colour=_GREY, italic=True)
 
         elif ext.status == "ERROR":
@@ -168,6 +180,14 @@ def _add_status_line(doc: Document, text: str, colour: RGBColor) -> None:
     p = doc.add_paragraph()
     r = p.add_run(text)
     _style_run(r, size=8, colour=colour)
+
+
+def _plain_suggested_text(var: TemplateVariable) -> str:
+    """Return suggested_text as plain text, stripping HTML tags when format is 'html'."""
+    raw = html_mod.unescape(var.suggested_text)
+    if var.suggested_text_format == "html":
+        return re.sub(r"<[^>]+>", " ", raw).strip()
+    return raw
 
 
 def _style_run(
