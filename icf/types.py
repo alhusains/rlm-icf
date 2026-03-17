@@ -56,6 +56,8 @@ class TemplateVariable:
     suggested_text_format: str = "text"
     # Injected at runtime by the dynamic-adaptation pass (None = no override).
     adaptation_notes: str | None = None
+    # Set True by the adaptation pass when this optional section is irrelevant for this study.
+    adaptation_skipped: bool = False
 
     def get_display_name(self) -> str:
         name = f"[{self.section_id}] {self.heading}"
