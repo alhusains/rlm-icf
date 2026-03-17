@@ -77,6 +77,37 @@ print(result)
         assert "def factorial(n):" in blocks[0]
         assert "return n * factorial(n - 1)" in blocks[0]
 
+    def test_nested_outer_fence_not_matched(self):
+        """LLM sometimes wraps code examples in ````repl outer docs fences.
+
+        The ````repl outer fence must NOT be matched — only the inner ```repl
+        block should be extracted.  Previously the regex would match starting
+        at position 1 inside ````repl and capture the inner ```repl header
+        line as code content, causing a SyntaxError on execution.
+        """
+        text = (
+            "Here is how to do it:\n"
+            "````repl\n"
+            "```repl\n"
+            "print(context_0[:200])\n"
+            "print('Total length:', len(context_0))\n"
+            "```\n"
+            "````\n"
+            "Run the block above."
+        )
+        blocks = find_code_blocks(text)
+        # The inner ```repl block should be extracted exactly once
+        assert len(blocks) == 1
+        assert "print(context_0[:200])" in blocks[0]
+        # The ```repl header line must NOT appear in the captured code
+        assert "```repl" not in blocks[0], f"Nested fence header leaked into code: {blocks[0]!r}"
+
+    def test_4backtick_outer_fence_no_inner(self):
+        """A ````repl fence with no inner ```repl should yield no blocks."""
+        text = "````repl\nsome text\n````\n"
+        blocks = find_code_blocks(text)
+        assert blocks == []
+
 
 class TestFindFinalAnswer:
     """Tests for find_final_answer function."""
@@ -166,6 +197,19 @@ multiline answer)"""
                 or f"'{var_name}'" in call_args
                 or f'"{var_name}"' in call_args
             )
+
+    def test_final_with_parentheses_in_content(self):
+        """Content containing '(' or ')' must not be truncated at the first ')'."""
+        # Simulates: FINAL({"filled_template": "... McGill (Montreal)"})
+        text = 'FINAL({"status": "FOUND", "filled_template": "McGill University Health Centre (Montreal)"})'
+        result = find_final_answer(text)
+        assert result is not None
+        assert "(Montreal)" in result, f"Truncated at inner ')': got {result!r}"
+
+        # Multiple nested parens
+        text2 = "FINAL(func(a, b) + other(c))"
+        result2 = find_final_answer(text2)
+        assert result2 == "func(a, b) + other(c)"
 
     def test_final_var_takes_precedence_over_final(self):
         """Test that FINAL_VAR is checked first and takes precedence over FINAL."""
