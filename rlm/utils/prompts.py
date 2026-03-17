@@ -112,8 +112,8 @@ def build_rlm_system_prompt(
     ]
 
 
-USER_PROMPT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Your next action:"""
-USER_PROMPT_WITH_ROOT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the original prompt: \"{root_prompt}\".\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Your next action:"""
+USER_PROMPT = """The REPL environment is active and your context is already loaded. Write a ```repl``` code block now to make progress toward your answer. Do not explain your plan — just execute code directly.\n\nYour ```repl``` code block:"""
+USER_PROMPT_WITH_ROOT = """The REPL environment is active and your context is already loaded. Write a ```repl``` code block now to make progress toward answering: \"{root_prompt}\"\n\nDo not explain your plan — just execute code directly.\n\nYour ```repl``` code block:"""
 
 
 def build_user_prompt(
@@ -123,13 +123,21 @@ def build_user_prompt(
     history_count: int = 0,
 ) -> dict[str, str]:
     if iteration == 0:
-        safeguard = "You have not interacted with the REPL environment or seen your prompt / context yet. Your next action should be to look through and figure out how to answer the prompt, so don't just provide a final answer yet.\n\n"
+        # Do NOT say "you haven't seen the context yet" — it contradicts the system prompt
+        # which explicitly states context_0 is already loaded.  The old safeguard caused
+        # newer models to believe the REPL was inactive.
+        safeguard = "The REPL environment is ready and your context is already loaded as context_0. Do NOT provide a final answer yet — first explore the context with a ```repl``` block.\n\n"
         prompt = safeguard + (
             USER_PROMPT_WITH_ROOT.format(root_prompt=root_prompt) if root_prompt else USER_PROMPT
         )
     else:
-        prompt = "The history before is your previous interactions with the REPL environment. " + (
-            USER_PROMPT_WITH_ROOT.format(root_prompt=root_prompt) if root_prompt else USER_PROMPT
+        prompt = (
+            "The prior messages show your real REPL interactions — every 'Code executed' block above ran actual Python. Continue the task. "
+            + (
+                USER_PROMPT_WITH_ROOT.format(root_prompt=root_prompt)
+                if root_prompt
+                else USER_PROMPT
+            )
         )
 
     # Inform model about multiple contexts if present

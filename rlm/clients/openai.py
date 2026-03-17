@@ -27,6 +27,7 @@ class OpenAIClient(BaseLM):
         api_key: str | None = None,
         model_name: str | None = None,
         base_url: str | None = None,
+        max_tokens: int | None = None,
         **kwargs,
     ):
         super().__init__(model_name=model_name, **kwargs)
@@ -43,6 +44,7 @@ class OpenAIClient(BaseLM):
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.async_client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model_name
+        self.max_tokens = max_tokens
 
         # Per-model usage tracking
         self.model_call_counts: dict[str, int] = defaultdict(int)
@@ -66,9 +68,11 @@ class OpenAIClient(BaseLM):
         if self.client.base_url == DEFAULT_PRIME_INTELLECT_BASE_URL:
             extra_body["usage"] = {"include": True}
 
-        response = self.client.chat.completions.create(
-            model=model, messages=messages, extra_body=extra_body
-        )
+        create_kwargs: dict[str, Any] = {"model": model, "messages": messages, "extra_body": extra_body}
+        if self.max_tokens is not None:
+            create_kwargs["max_completion_tokens"] = self.max_tokens
+
+        response = self.client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
         return response.choices[0].message.content
 
@@ -90,9 +94,11 @@ class OpenAIClient(BaseLM):
         if self.client.base_url == DEFAULT_PRIME_INTELLECT_BASE_URL:
             extra_body["usage"] = {"include": True}
 
-        response = await self.async_client.chat.completions.create(
-            model=model, messages=messages, extra_body=extra_body
-        )
+        create_kwargs: dict[str, Any] = {"model": model, "messages": messages, "extra_body": extra_body}
+        if self.max_tokens is not None:
+            create_kwargs["max_completion_tokens"] = self.max_tokens
+
+        response = await self.async_client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
         return response.choices[0].message.content
 
