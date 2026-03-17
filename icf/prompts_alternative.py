@@ -57,7 +57,12 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         f"WHAT TO EXTRACT: {var.instructions}\n\n"
     )
 
-    prompt += f"{availability}\n\n"
+    if var.required:
+        importance = "REQUIRED — this section must appear in every ICF."
+    else:
+        importance = "OPTIONAL — include only if directly relevant to this specific study."
+
+    prompt += f"{availability}\n\nIMPORTANCE: {importance}\n\n"
 
     if var.required_text:
         prompt += f"ICF TEMPLATE TEXT (fill the {{{{ ... }}}} variables):\n{var.required_text}\n\n"
@@ -70,7 +75,11 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         "- `context` and `context_0` are the SAME variable: a plain STRING (not a list).\n"
         "  Use `context_0` directly. Do NOT index it like context[0] (that returns one character).\n"
         "- `globals()` is blocked. Access variables by name directly.\n"
-        "- Pages are delimited by `--- PAGE X ---` markers in the text.\n\n"
+        "- Pages are delimited by `--- PAGE X ---` markers in the text.\n"
+        "- context_0 IS ALWAYS AVAILABLE in every REPL block — it is pre-loaded before you start.\n"
+        "  Never ask for it to be provided; just use it directly in code.\n"
+        "- NEVER wrap a ```repl block inside another fence (e.g. ````repl). Write code blocks\n"
+        "  DIRECTLY as ```repl ... ``` with no outer wrapper. Nested fences cause SyntaxError.\n\n"
         "APPROACH (follow this funnel — each step is cheaper than the next):\n\n"
         "STEP 1 — Keyword filter (free, no LLM tokens):\n"
         "   Use regex to find the most relevant passages before calling any LLM.\n"
@@ -104,6 +113,9 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         "STEP 2 — Sub-LM on snippets only (cheap, focused):\n"
         "   If Step 1 found relevant snippets, pass ONLY those to a sub-LM.\n"
         "   Do NOT pass the entire protocol when snippets are available.\n"
+        "   CRITICAL: The sub-LLM called by llm_query only receives the prompt string you write.\n"
+        "   It cannot see context_0 or your REPL session — YOU always have full REPL access to\n"
+        "   context_0. Always embed the snippet text inside the prompt f-string.\n"
         "   ```repl\n"
         "   result = llm_query(\n"
         "       f'TARGET_INSTRUCTION\\n\\n'\n"

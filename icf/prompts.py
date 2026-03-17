@@ -31,8 +31,15 @@ def _availability_note(var: TemplateVariable) -> str:
     )
 
 
-def build_extraction_prompt(var: TemplateVariable) -> str:
-    """Build the root_prompt for extracting a single template variable."""
+def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> str:
+    """Build the root_prompt for extracting a single template variable.
+
+    Args:
+        var: The template variable to extract.
+        protocol_length: Actual character count of the loaded protocol.  When
+            provided (> 0) it is included in the ENVIRONMENT NOTES so the LLM
+            has concrete proof that context_0 is loaded.
+    """
     sub = f" > {var.sub_section}" if var.sub_section else ""
     availability = _availability_note(var)
 
@@ -57,39 +64,76 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         f"WHAT TO EXTRACT: {var.instructions}\n\n"
     )
 
-    prompt += f"{availability}\n\n"
+    if var.required:
+        importance = "REQUIRED — this section must appear in every ICF."
+    else:
+        importance = "OPTIONAL — include only if directly relevant to this specific study."
+
+    prompt += f"{availability}\n\nIMPORTANCE: {importance}\n\n"
+
+    prompt += (
+        "TEMPLATE SYMBOL GUIDE — read this carefully before processing the template text below:\n"
+        "  {{placeholder}}         → REQUIRED fill-in. Replace the entire {{...}} token with\n"
+        "                            study-specific text extracted from the protocol. The\n"
+        "                            {{...}} markers must NOT appear in your output.\n"
+        "  {{option1/option2}}     → CHOOSE ONE. Pick the applicable option from the\n"
+        "                            slash-separated list (e.g. {{will/may}} → 'will' or 'may').\n"
+        "                            The {{...}} markers must NOT appear in your output.\n"
+        "  <<Condition block>>     → CONDITIONAL SECTION (double angle brackets). Include the\n"
+        "                            text that follows ONLY if the stated condition applies to\n"
+        "                            this study. Remove the <<...>> marker itself entirely —\n"
+        "                            it must NEVER appear in the final ICF text.\n"
+        "  <Condition label>       → CONDITIONAL SENTENCE/PARAGRAPH (single angle brackets).\n"
+        "                            Same rule: include the text only if the condition applies;\n"
+        "                            strip the <...> marker from the output.\n"
+        "  OR (standalone line)    → ALTERNATIVE. Choose exactly ONE of the blocks immediately\n"
+        "                            above or below this marker. Do not include both, and do\n"
+        "                            not include the word 'OR' itself in the final text.\n"
+        "  • or -                  → BULLET POINT. Both are used interchangeably as list items.\n\n"
+        "OUTPUT RULE: The filled_template field in your JSON result must contain clean ICF\n"
+        "prose — no <<...>>, <...>, {{...}}, or standalone OR lines remaining.\n\n"
+    )
 
     if var.required_text:
-        prompt += f"ICF TEMPLATE TEXT (fill the {{{{ ... }}}} variables):\n{var.required_text}\n\n"
+        prompt += f"ICF TEMPLATE TEXT:\n{var.required_text}\n\n"
 
     if var.suggested_text:
-        prompt += f"SUGGESTED TEXT:\n{var.suggested_text}\n\n"
+        prompt += f"SUGGESTED TEXT (adapt to this study; apply the symbol rules above):\n{var.suggested_text}\n\n"
 
     prompt += (
         "ENVIRONMENT NOTES:\n"
-        "- `context` and `context_0` are the SAME variable: a plain STRING (not a list).\n"
+        + (
+            f"- context_0 is PRE-LOADED with {protocol_length:,} characters of protocol text.\n"
+            if protocol_length
+            else ""
+        )
+        + "- `context` and `context_0` are the SAME variable: a plain STRING (not a list).\n"
         "  Use `context_0` directly. Do NOT index it like context[0] (that returns one character).\n"
         "- `globals()` is blocked. Access variables by name directly.\n"
-        "- Pages are delimited by `--- PAGE X ---` markers in the text.\n\n"
+        "- Pages are delimited by `--- PAGE X ---` markers in the text.\n"
+        "- REPL blocks you write are AUTOMATICALLY executed. Never ask for user permission.\n"
+        "- NEVER wrap a ```repl block inside another fence (e.g. ````repl). Write code blocks\n"
+        "  DIRECTLY as ```repl ... ``` with no outer wrapper. Nested fences cause SyntaxError.\n\n"
         "APPROACH:\n"
-        "1. First, check the size of context_0:\n"
+        "1. Chunk context_0 and use llm_query_batched() to semantically search for the target info.\n"
+        "   CRITICAL: The sub-LLM called by llm_query/llm_query_batched only receives the prompt\n"
+        "   string you write — it cannot see context_0 or your REPL session. YOU (the orchestrator)\n"
+        "   always have full REPL access to context_0 and must embed the chunk text in each prompt.\n"
         "   ```repl\n"
-        "   print(f'Protocol length: {len(context_0)} chars')\n"
-        "   ```\n"
-        "2. Chunk context_0 and use llm_query_batched() to semantically search for the target info.\n"
-        "   This is CRITICAL because section names vary greatly between protocols -- regex alone will miss them.\n"
-        "   ```repl\n"
-        "   chunk_size = 100000\n"
+        "   chunk_size = 50000\n"
         "   chunks = [context_0[i:i+chunk_size] for i in range(0, len(context_0), chunk_size)]\n"
-        "   prompts = [f'Find information about TARGET_INFO in this clinical protocol excerpt. "
-        "Return relevant quotes with page numbers (look for --- PAGE X --- markers). "
-        'If not found, say NOT FOUND.\\n\\n{chunk}" for chunk in chunks]\n'
+        "   # Embed chunk text directly in each prompt so the sub-LLM can read it\n"
+        "   prompts = [\n"
+        "       f'Find information about TARGET_INFO. Return quotes with page numbers '\n"
+        "       f'(--- PAGE X --- markers). If not found, say NOT FOUND.\\n\\nExcerpt:\\n{chunk}'\n"
+        "       for chunk in chunks\n"
+        "   ]\n"
         "   results = llm_query_batched(prompts)\n"
         "   for i, r in enumerate(results):\n"
         "       print(f'Chunk {i}: {r[:500]}')\n"
         "   ```\n"
-        "3. Once you find relevant passages, verify quotes exist in context_0 with `quote in context_0`.\n"
-        "4. Build a JSON result dict and return it:\n"
+        "2. Once you find relevant passages, verify quotes exist in context_0 with `quote in context_0`.\n"
+        "3. Build a JSON result dict and return it:\n"
         "   ```repl\n"
         "   import json\n"
         "   result_json = json.dumps(result_dict)\n"
