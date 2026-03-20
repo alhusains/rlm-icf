@@ -918,22 +918,6 @@
       "required_text": "If you have questions about taking part in this study, or if you suffer a research-related injury, you can talk to your study doctor, or the doctor who is in charge of the study at this institution. That person is: {{insert person's name and phone number}}.\n_____________________                     _______________________\n              Name                                                   Telephone Number\n\nIf you have questions about your rights as a participant or about ethical issues related to this study, call the Chair of the University Health Network Research Ethics Board (UHN REB) or the Research Ethics office number at 416-581-7849.  The REB is a group of people who oversee the ethical conduct of research studies. The UHN REB is not involved in the study at all. Everything that you discuss will be kept confidential.\n\nYou will be given a copy of this signed and dated consent form prior to participating in this study. {{include if relevant: \"A copy of the consent form that you sign to enter the study may be included in your health record/hospital chart.\"}}",
       "suggested_text": "",
       "suggested_text_format": "text"
-    },
-    {
-      "section_id": "32",
-      "heading": "Consent Signature Page (there is no header for this section)",
-      "sub_section": null,
-      "required": true,
-      "complexity": [
-        "Easy mapping complexity"
-      ],
-      "is_in_protocol": true,
-      "partially_in_protocol": false,
-      "is_standard_text": false,
-      "instructions": "The Consent Signature Page uses a standard UHN template structure and does not have a bolded section heading. Update the TITLE line to reflect the study name.\n\nThere are two CONDITIONAL line items in the consent statement. Determine each independently by searching the protocol:\n\n1. 'and transfer of specimens' — Include this line if the study involves collection and transfer of biological samples (tissue, blood, urine, etc.) to another institution or lab for research purposes. Omit if the study collects no biological samples or transfers none off-site.\n\n2. 'My family doctor/health care provider {{will/may}} be informed of study participation' — Determine from the protocol or study type whether participants' family doctors will be notified of their participation. For most therapeutic intervention studies, family doctors ARE informed (use 'will' if always notified, 'may' if sometimes). For studies where confidentiality prevents notification (e.g., some psychiatric, sexual health, or healthy volunteer studies), omit this line entirely.\n\nAll other signature lines, witness lines, interpreter attestation, and date fields are standard and must not be removed.",
-      "required_text": "See attached for signature section.",
-      "suggested_text": "<<Consent Statement — standard wording; include both optional items where applicable>>\nAll of my questions have been answered.\n<Include if the study involves sample collection and transfer:> I allow access to medical records and transfer of specimens and related personal health information from another institution to UHN if requested by the study team.\nI do not give up any legal rights by signing this consent form.\n<Include if section 22 states family doctor will or may be informed:> My family doctor/health care provider {{will/may}} be informed of study participation.\nI agree, or agree to allow the person I am responsible for, to take part in this study.",
-      "suggested_text_format": "text"
     }
   ]
 }
