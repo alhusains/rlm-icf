@@ -10,6 +10,7 @@ import ast
 import json
 import re
 
+from icf.debug_logger import ICFDebugLogger
 from icf.prompts import build_extraction_prompt
 from icf.types import Evidence, ExtractionResult, TemplateVariable
 from rlm import RLM
@@ -47,10 +48,26 @@ def _build_icf_system_prompt(protocol_length: int) -> str:
         "  ✗ 'I cannot continue' / 'I'm sorry, I cannot assist with that'\n"
         "  ✗ Any prose-only response when you still have iterations remaining\n"
         "  If you feel an urge to write any of the above, write a ```repl block instead.\n\n"
-        "FINISHING:\n"
-        "  Once you have gathered enough information, build a result_json dict in the REPL\n"
-        "  and call FINAL_VAR(result_json). Do NOT write a prose 'FINAL ANSWER' block —\n"
-        "  use FINAL_VAR so the framework can parse the structured result.\n"
+        "FINISHING — read this carefully:\n"
+        "  Once you have gathered enough information:\n"
+        "  1. Build your result dict in a ```repl block.\n"
+        "  2. Serialize it with json.dumps() — FINAL_VAR requires a STRING, not a dict.\n"
+        "  3. Call FINAL_VAR(result_json) on the LAST LINE of that SAME ```repl block.\n"
+        "     FINAL_VAR must be INSIDE a ```repl block — writing it as prose does nothing.\n\n"
+        "  CORRECT example:\n"
+        "  ```repl\n"
+        "  import json\n"
+        "  result_dict = {\"section_id\": \"...\", \"status\": \"FOUND\", ...}\n"
+        "  result_json = json.dumps(result_dict)\n"
+        "  FINAL_VAR(result_json)   # <-- must be the last line, inside this block\n"
+        "  ```\n\n"
+        "  WRONG — these do NOT finish the task:\n"
+        "    ✗  result_json   (bare expression at end of block — not the same as FINAL_VAR)\n"
+        "    ✗  FINAL_VAR(result_dict)  (dict, not string → AttributeError)\n"
+        "    ✗  Writing 'FINAL_VAR(...)' outside a code block (prose — not executed)\n\n"
+        "  RECOVERY RULE: If you have already found the information and built result_dict in\n"
+        "  a previous iteration, do NOT rebuild it. Just call FINAL_VAR(json.dumps(result_dict))\n"
+        "  in your next ```repl block immediately.\n\n"
         "  FIRST-RESPONSE RULE: Your very first response MUST contain a ```repl block.\n"
     )
     return RLM_SYSTEM_PROMPT + addendum
@@ -66,12 +83,16 @@ class ExtractionEngine:
         backend_kwargs: dict | None = None,
         max_iterations: int = 20,
         verbose: bool = False,
+        debug_logger: ICFDebugLogger | None = None,
+        max_retries: int = 5,
     ):
         self.model_name = model_name
         self.backend = backend
         self.backend_kwargs = backend_kwargs or {}
         self.max_iterations = max_iterations
         self.verbose = verbose
+        self.debug_logger = debug_logger
+        self.max_retries = max_retries
 
     def extract_variable(
         self,
@@ -83,7 +104,10 @@ class ExtractionEngine:
         Routing logic:
           - standard_text -> return required_text directly
           - not in protocol -> return SKIPPED
-          - otherwise -> run RLM extraction
+          - otherwise -> run RLM extraction with up to max_retries total attempts
+
+        If the RLM returns an ERROR result (invalid/missing JSON, exception, etc.)
+        the section is re-run with a fresh RLM up to max_retries total attempts.
         """
         if variable.adaptation_skipped:
             return self._make_adaptation_skipped_result(variable)
@@ -94,7 +118,30 @@ class ExtractionEngine:
         if not variable.is_in_protocol and not variable.partially_in_protocol:
             return self._make_skipped_result(variable)
 
-        return self._run_rlm_extraction(protocol_text, variable)
+        if self.debug_logger:
+            self.debug_logger.set_section(
+                variable.section_id, variable.heading, variable.sub_section or ""
+            )
+
+        last_result: ExtractionResult | None = None
+        for attempt in range(1, self.max_retries + 1):
+            result = self._run_rlm_extraction(protocol_text, variable)
+            if result.status != "ERROR":
+                return result
+            last_result = result
+            if attempt < self.max_retries:
+                print(
+                    f"[EXTRACT] Section {variable.section_id}: attempt {attempt}/{self.max_retries} "
+                    f"produced an error ({result.error}). Retrying with fresh RLM ..."
+                )
+            else:
+                print(
+                    f"[EXTRACT] Section {variable.section_id}: all {self.max_retries} attempts "
+                    f"failed. Last error: {result.error}"
+                )
+
+        assert last_result is not None
+        return last_result
 
     # ------------------------------------------------------------------
     # RLM extraction
@@ -119,6 +166,7 @@ class ExtractionEngine:
                 verbose=self.verbose,
                 max_iterations=max_iter,
                 custom_system_prompt=_build_icf_system_prompt(len(protocol_text)),
+                logger=self.debug_logger,
             )
 
             completion = rlm.completion(
