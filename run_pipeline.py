@@ -149,6 +149,17 @@ def main() -> int:
         default=None,
         help="Extract only these section IDs (e.g. 2.1 3 6 8).",
     )
+    parser.add_argument(
+        "--debug-log-dir",
+        default=None,
+        help=(
+            "Directory to write a JSONL debug trace of every RLM iteration. "
+            "Each line records the LLM response, code executed, REPL output "
+            "(truncated), and final answer — without the full protocol text. "
+            "Useful for auditing model behaviour and optimising prompts. "
+            "Example: --debug-log-dir output/debug_logs"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -194,6 +205,7 @@ def main() -> int:
         max_iterations=args.max_iterations,
         verbose=args.verbose,
         section_filter=args.sections,
+        debug_log_dir=args.debug_log_dir,
     )
 
     result = pipeline.run()

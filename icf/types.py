@@ -152,6 +152,7 @@ class PipelineResult:
     extractions: list[ExtractionResult]
     validations: list[ValidationResult]
     output_docx_path: str | None
+    clean_icf_path: str | None
     report_path: str | None
     summary: dict
 
@@ -160,6 +161,7 @@ class PipelineResult:
             "extractions": [e.to_dict() for e in self.extractions],
             "validations": [v.to_dict() for v in self.validations],
             "output_docx_path": self.output_docx_path,
+            "clean_icf_path": self.clean_icf_path,
             "report_path": self.report_path,
             "summary": self.summary,
         }

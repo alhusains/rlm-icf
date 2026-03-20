@@ -21,6 +21,8 @@ import time
 
 from icf.adapt import ADAPTATION_TRIGGER_IDS, build_adapted_registry
 from icf.assemble import generate_draft_docx, generate_report_json
+from icf.clean_icf import generate_clean_icf_docx
+from icf.debug_logger import ICFDebugLogger
 from icf.extract import ExtractionEngine
 from icf.ingest import load_protocol
 from icf.registry import load_template_registry
@@ -58,6 +60,7 @@ class ICFPipeline:
         max_iterations: int = 20,
         verbose: bool = False,
         section_filter: list[str] | None = None,
+        debug_log_dir: str | None = None,
     ):
         self.protocol_path = protocol_path
         self.template_path = template_path
@@ -69,6 +72,7 @@ class ICFPipeline:
         self.max_iterations = max_iterations
         self.verbose = verbose
         self.section_filter = section_filter
+        self.debug_log_dir = debug_log_dir
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -108,12 +112,18 @@ class ICFPipeline:
         )
 
         # -- Stage 3+4+5: Two-phase extract with adaptation ------------------
+        debug_logger: ICFDebugLogger | None = None
+        if self.debug_log_dir:
+            debug_logger = ICFDebugLogger(log_dir=self.debug_log_dir)
+            print(f"[DEBUG] RLM trace will be saved -> {debug_logger.log_file_path}")
+
         engine = ExtractionEngine(
             model_name=self.model_name,
             backend=self.backend,
             backend_kwargs=self.backend_kwargs,
             max_iterations=self.max_iterations,
             verbose=self.verbose,
+            debug_logger=debug_logger,
         )
 
         # Split variables into trigger (adaptation seeds) and the rest.
@@ -204,6 +214,7 @@ class ICFPipeline:
 
         docx_path = os.path.join(self.output_dir, "draft_icf.docx")
         json_path = os.path.join(self.output_dir, "extraction_report.json")
+        clean_docx_path = os.path.join(self.output_dir, "final_icf.docx")
 
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
         generate_draft_docx(extractions, validations, final_variables, docx_path)
@@ -211,10 +222,25 @@ class ICFPipeline:
         print(f"[ASSEMBLE] Writing report    -> {json_path}")
         generate_report_json(extractions, validations, summary, json_path)
 
+        # Resolve the UHN logo from the same directory as the template registry.
+        _logo_candidate = os.path.join(
+            os.path.dirname(self.template_path) or ".", "UHN_logo.jpg"
+        )
+        logo_path = _logo_candidate if os.path.isfile(_logo_candidate) else None
+
+        print(f"[ASSEMBLE] Writing clean ICF -> {clean_docx_path}")
+        generate_clean_icf_docx(
+            extractions=extractions,
+            variables=final_variables,
+            output_path=clean_docx_path,
+            logo_path=logo_path,
+        )
+
         result = PipelineResult(
             extractions=extractions,
             validations=validations,
             output_docx_path=docx_path,
+            clean_icf_path=clean_docx_path,
             report_path=json_path,
             summary=summary,
         )
@@ -324,7 +350,9 @@ class ICFPipeline:
         print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
         if result.output_docx_path:
-            print(f"  Draft ICF:  {result.output_docx_path}")
+            print(f"  Draft ICF:   {result.output_docx_path}")
+        if result.clean_icf_path:
+            print(f"  Clean ICF:   {result.clean_icf_path}")
         if result.report_path:
-            print(f"  Report:     {result.report_path}")
+            print(f"  Report:      {result.report_path}")
         print(sep)
