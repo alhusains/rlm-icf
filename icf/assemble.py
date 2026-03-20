@@ -67,9 +67,11 @@ def generate_draft_docx(
 
         # Omit optional sections that were not found / not applicable.
         # Required sections always appear so the human reviewer knows to fill them.
+        # ADAPTATION_SKIPPED sections always appear regardless of required status so
+        # the study team can review and confirm the irrelevance decision.
         if (
             ext is not None
-            and ext.status in ("NOT_FOUND", "SKIPPED", "ADAPTATION_SKIPPED")
+            and ext.status in ("NOT_FOUND", "SKIPPED")
             and not var.required
         ):
             continue
@@ -95,11 +97,15 @@ def generate_draft_docx(
             "ADAPTATION_SKIPPED": _GREY,
             "ERROR": _RED,
         }.get(ext.status, _GREY)
-        badge = f"Status: {ext.status}"
-        if ext.confidence and ext.confidence != "N/A":
-            badge += f"  |  Confidence: {ext.confidence}"
-        if ext.error:
-            badge += f"  |  Error: {ext.error}"
+        if ext.status == "ADAPTATION_SKIPPED":
+            # Section was deemed irrelevant for this study — plain skip message only.
+            badge = "Status: SKIPPED — not relevant to this study"
+        else:
+            badge = f"Status: {ext.status}"
+            if ext.confidence and ext.confidence != "N/A":
+                badge += f"  |  Confidence: {ext.confidence}"
+            if ext.error:
+                badge += f"  |  Error: {ext.error}"
         _add_status_line(doc, badge, colour)
 
         # Main content
