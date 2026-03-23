@@ -15,6 +15,7 @@ no content are silently omitted.
 
 from __future__ import annotations
 
+import html as html_mod
 import os
 import re
 
@@ -80,6 +81,7 @@ def generate_clean_icf_docx(
 
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
 
+    _write_intro_page(doc)
     _write_cover_page(doc, variables, ext_map)
     _write_body_sections(doc, variables, ext_map)
     _write_signature_pages(doc, _get_study_title(ext_map))
@@ -230,6 +232,148 @@ def _add_page_field(para, field_type: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Introductory notes page (inserted before the cover page)
+# ---------------------------------------------------------------------------
+
+_INTRO_GREY = RGBColor(0x55, 0x55, 0x55)
+_INTRO_BORDER_GREY = RGBColor(0xBB, 0xBB, 0xBB)
+
+
+def _write_intro_page(doc: Document) -> None:
+    """Write an introductory notes page that precedes the main ICF content."""
+    # ---- Page title --------------------------------------------------------
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(18)
+    p.paragraph_format.space_after = Pt(6)
+    r = p.add_run("AI-Generated ICF: Important Notes")
+    r.font.name = _FONT
+    r.font.size = Pt(14)
+    r.bold = True
+    r.underline = True
+
+    _add_blank(doc)
+
+    # ---- Color coding legend -----------------------------------------------
+    _intro_section_label(doc, "Color Coding Legend")
+
+    _intro_body(
+        doc,
+        "Section headings and body text are color-coded by extraction confidence:",
+    )
+
+    _legend_entries: list[tuple[str, str, RGBColor]] = [
+        ("HIGH CONFIDENCE", "Content was reliably extracted from the protocol.", _CONFIDENCE_COLORS["HIGH"]),
+        ("MEDIUM CONFIDENCE", "Content was partially extracted or inferred; human review recommended.", _CONFIDENCE_COLORS["MEDIUM"]),
+        ("LOW CONFIDENCE", "Content could not be reliably extracted; requires careful review and completion.", _CONFIDENCE_COLORS["LOW"]),
+    ]
+    for label, desc, color in _legend_entries:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.left_indent = Cm(0.8)
+        r_label = p.add_run(label + ": ")
+        r_label.font.name = _FONT
+        r_label.font.size = Pt(_BODY_PT)
+        r_label.bold = True
+        r_label.font.color.rgb = color
+        r_desc = p.add_run(desc)
+        r_desc.font.name = _FONT
+        r_desc.font.size = Pt(_BODY_PT)
+        r_desc.font.color.rgb = _INTRO_GREY
+
+    _add_blank(doc)
+
+    # ---- Required sections note --------------------------------------------
+    _intro_section_label(doc, "Required Sections Not Found in Protocol")
+
+    _intro_body(
+        doc,
+        "All required ICF sections are included in this document, even when the "
+        "corresponding information could not be located in the study protocol. "
+        "For such sections, a brief suggested text is provided in small italic grey "
+        "font directly below the section heading. This suggested text is for guidance "
+        "only and must be reviewed, edited, and approved by the study team before use.",
+    )
+
+    _add_blank(doc)
+
+    # ---- Detailed draft reference ------------------------------------------
+    _intro_section_label(doc, "Detailed ICF Draft")
+
+    _intro_body(
+        doc,
+        "A separate detailed ICF draft (draft_icf.docx) is produced alongside this "
+        "clean version. The detailed draft contains additional information for each "
+        "section, including:",
+    )
+    for bullet in [
+        "Evidence citations with direct quotes and page references from the protocol",
+        "Extraction status and confidence scores",
+        "Validation issues flagged during quality checking",
+        "Suggested text for sections requiring manual completion",
+    ]:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(1.2)
+        p.paragraph_format.first_line_indent = Cm(-0.5)
+        r = p.add_run("\u2022 " + bullet)
+        r.font.name = _FONT
+        r.font.size = Pt(_BODY_PT)
+        r.font.color.rgb = _INTRO_GREY
+
+    _add_blank(doc)
+
+    # ---- Disclaimers -------------------------------------------------------
+    _intro_section_label(doc, "Disclaimers")
+
+    for note in [
+        "This document was generated automatically by an AI system and has not been "
+        "reviewed or approved by a regulatory body or ethics committee.",
+        "All content must be reviewed, verified, and edited by qualified clinical "
+        "research professionals before submission or use with study participants.",
+        "The AI extraction is based solely on the provided study protocol. Information "
+        "not present in the protocol will not appear in the extracted content.",
+        "This tool does not constitute legal, medical, or regulatory advice.",
+    ]:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(0.8)
+        p.paragraph_format.first_line_indent = Cm(-0.5)
+        r = p.add_run("\u2022 " + note)
+        r.font.name = _FONT
+        r.font.size = Pt(_SMALL_PT)
+        r.italic = True
+        r.font.color.rgb = _INTRO_GREY
+
+    doc.add_page_break()
+
+
+def _intro_section_label(doc: Document, text: str) -> None:
+    """Bold sub-heading for intro page sections."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(3)
+    r = p.add_run(text)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+    r.bold = True
+
+
+def _intro_body(doc: Document, text: str) -> None:
+    """Regular body paragraph for the intro page."""
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
+    r = p.add_run(text)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+
+
+# ---------------------------------------------------------------------------
 # Cover page (sections 2.x)
 # ---------------------------------------------------------------------------
 
@@ -239,10 +383,7 @@ def _write_cover_page(
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
 ) -> None:
-    _add_blank(doc)
-    _add_blank(doc)
-
-    # Main ICF title — centred, not bold (matches approved ICF paragraph 3)
+    # Main ICF title — centred, bold
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_before = Pt(0)
@@ -250,6 +391,7 @@ def _write_cover_page(
     run = p.add_run("Informed Consent Form for Participation in a Research Study")
     run.font.name = _FONT
     run.font.size = Pt(_BODY_PT)
+    run.bold = True
 
     _add_blank(doc)
 
@@ -262,12 +404,15 @@ def _write_cover_page(
             continue
 
         p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
 
         label = var.sub_section or ""
         if label:
+            # Strip any leading repetition of the label from the extracted content
+            # (e.g. "Study Title:" label + "Study Title: XYZ" content → "XYZ").
+            content = _strip_label_prefix(content, label)
             rl = p.add_run(label)
             rl.bold = True
             rl.font.name = _FONT
@@ -335,7 +480,7 @@ def _write_body_sections(
             _add_content_block(doc, content, color=color)
         else:
             # Required section — show a placeholder so the document is complete.
-            _add_placeholder(doc, ext)
+            _add_placeholder(doc, ext, var)
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +489,7 @@ def _write_body_sections(
 
 
 def _write_signature_pages(doc: Document, study_title: str) -> None:
-    _add_blank(doc)
+    doc.add_page_break()
 
     # TITLE line: "TITLE:" (plain) + " [title]" (bold) — matches approved ICF
     p = doc.add_paragraph()
@@ -556,7 +701,7 @@ def _add_content_block(
         if _BULLET_RE.match(stripped):
             content = _BULLET_RE.sub("", stripped).strip()
             p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(2)
             p.paragraph_format.left_indent = Cm(1.0)
@@ -568,7 +713,7 @@ def _add_content_block(
                 r.font.color.rgb = color
         else:
             p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(3)
             r = p.add_run(stripped)
@@ -578,8 +723,17 @@ def _add_content_block(
                 r.font.color.rgb = color
 
 
-def _add_placeholder(doc: Document, ext: ExtractionResult | None) -> None:
-    """Add a visible placeholder for a required section with no usable content."""
+def _add_placeholder(
+    doc: Document,
+    ext: ExtractionResult | None,
+    var: TemplateVariable | None = None,
+) -> None:
+    """Add a visible placeholder for a required section with no usable content.
+
+    When *var* carries suggested_text, that text is rendered below the
+    placeholder in a smaller grey italic style so the reviewer has a starting
+    point without cluttering the clean ICF layout.
+    """
     reason = ""
     if ext:
         if ext.status == "SKIPPED":
@@ -591,11 +745,25 @@ def _add_placeholder(doc: Document, ext: ExtractionResult | None) -> None:
 
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(3)
+    p.paragraph_format.space_after = Pt(2)
     r = p.add_run(f"[TO BE COMPLETED{reason}]")
     r.font.name = _FONT
     r.font.size = Pt(_BODY_PT)
     r.italic = True
+
+    if var and var.suggested_text:
+        suggested = _plain_suggested_text(var).strip()
+        if suggested:
+            p2 = doc.add_paragraph()
+            p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p2.paragraph_format.space_before = Pt(2)
+            p2.paragraph_format.space_after = Pt(3)
+            p2.paragraph_format.left_indent = Cm(0.5)
+            r2 = p2.add_run("Suggested text: " + suggested)
+            r2.font.name = _FONT
+            r2.font.size = Pt(_SMALL_PT)
+            r2.italic = True
+            r2.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
 
 def _apply_sig_tab_stops(para) -> None:
@@ -649,6 +817,28 @@ def _sig_underlines_interpreter(doc: Document) -> None:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
+
+def _strip_label_prefix(content: str, label: str) -> str:
+    """Remove a leading label repetition from extracted content.
+
+    Handles cases where the LLM echoes the field name in its output, e.g.:
+      label="Study Title:"  content="Study Title: Some Long Title"  → "Some Long Title"
+    Matching is case-insensitive; the trailing colon and surrounding whitespace
+    are consumed so the result is clean.
+    """
+    label_clean = label.rstrip(":").strip()
+    # Try matching with optional colon after the label
+    pattern = re.compile(r"^" + re.escape(label_clean) + r"\s*:?\s*", re.IGNORECASE)
+    return pattern.sub("", content).strip() or content
+
+
+def _plain_suggested_text(var: TemplateVariable) -> str:
+    """Return suggested_text as plain text, stripping HTML tags when format is 'html'."""
+    raw = html_mod.unescape(var.suggested_text)
+    if var.suggested_text_format == "html":
+        return re.sub(r"<[^>]+>", " ", raw).strip()
+    return raw
 
 
 def _get_section_content(ext: ExtractionResult | None) -> str | None:
