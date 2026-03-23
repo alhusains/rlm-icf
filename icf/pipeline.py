@@ -224,7 +224,7 @@ class ICFPipeline:
 
         # Resolve the UHN logo from the same directory as the template registry.
         _logo_candidate = os.path.join(
-            os.path.dirname(self.template_path) or ".", "UHN_logo.jpg"
+            os.path.dirname(self.template_path) or ".", "UHN_logo.png"
         )
         logo_path = _logo_candidate if os.path.isfile(_logo_candidate) else None
 
