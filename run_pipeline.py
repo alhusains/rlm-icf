@@ -35,6 +35,14 @@ import argparse
 import os
 import sys
 
+# Load .env early so os.environ is populated before argparse default evaluation.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell env vars
+
 from icf.pipeline import ICFPipeline
 from icf.registry import convert_csv_to_json
 
@@ -86,10 +94,23 @@ def main() -> int:
         "--backend",
         default="openai",
         help=(
-            "RLM backend (default: openai). "
+            "LLM provider backend (default: openai). "
             "Choices: openai | azure_openai | vllm. "
             "Use 'azure_openai' for Azure AI Foundry deployments; "
             "use 'vllm' for local vLLM servers."
+        ),
+    )
+    parser.add_argument(
+        "--extraction-backend",
+        default="rlm",
+        choices=["rlm", "naive", "rag"],
+        help=(
+            "Extraction strategy (default: rlm). "
+            "  rlm   — iterative RLM with code execution and semantic chunking (default). "
+            "  naive — full-context single LLM call per section (benchmarking baseline). "
+            "  rag   — retrieval-augmented generation with hybrid search (coming soon). "
+            "This flag is orthogonal to --backend: e.g., "
+            "'--backend azure_openai --extraction-backend naive' is valid."
         ),
     )
     parser.add_argument(
@@ -149,6 +170,49 @@ def main() -> int:
         default=None,
         help="Extract only these section IDs (e.g. 2.1 3 6 8).",
     )
+    # ------------------------------------------------------------------
+    # RAG backend options (only used when --extraction-backend rag)
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--rag-embedding-deployment",
+        default=os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large"),
+        help=(
+            "Embedding model / Azure deployment name for the RAG backend. "
+            "Defaults to the AZURE_OPENAI_EMBEDDING_DEPLOYMENT env var, "
+            "then 'text-embedding-3-large'. "
+            "For Azure, this is your deployment name. "
+            "For standard OpenAI, this is the model name."
+        ),
+    )
+    parser.add_argument(
+        "--rag-reranker",
+        default="local",
+        choices=["local", "none"],
+        help=(
+            "Reranker for the RAG backend (default: local). "
+            "  local — cross-encoder/ms-marco-MiniLM-L-12-v2 via sentence-transformers. "
+            "  none  — skip reranking (faster, useful for ablation studies)."
+        ),
+    )
+    parser.add_argument(
+        "--rag-top-k",
+        type=int,
+        default=20,
+        help="Number of candidate chunks retrieved before reranking (default: 20).",
+    )
+    parser.add_argument(
+        "--rag-rerank-top-k",
+        type=int,
+        default=8,
+        help="Number of chunks passed to the generator after reranking (default: 8).",
+    )
+    parser.add_argument(
+        "--rag-num-queries",
+        type=int,
+        default=4,
+        help="Number of search queries generated per ICF section (default: 4).",
+    )
+
     parser.add_argument(
         "--debug-log-dir",
         default=None,
@@ -202,10 +266,16 @@ def main() -> int:
         model_name=args.model,
         backend=args.backend,
         backend_kwargs=backend_kwargs,
+        extraction_backend=args.extraction_backend,
         max_iterations=args.max_iterations,
         verbose=args.verbose,
         section_filter=args.sections,
         debug_log_dir=args.debug_log_dir,
+        rag_embedding_deployment=args.rag_embedding_deployment,
+        rag_reranker=args.rag_reranker,
+        rag_top_k=args.rag_top_k,
+        rag_rerank_top_k=args.rag_rerank_top_k,
+        rag_num_queries=args.rag_num_queries,
     )
 
     result = pipeline.run()

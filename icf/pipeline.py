@@ -34,6 +34,8 @@ from icf.types import (
 )
 from icf.validate import validate_extractions
 
+_VALID_EXTRACTION_BACKENDS = ("rlm", "naive", "rag")
+
 
 class ICFPipeline:
     """End-to-end Informed Consent Form extraction pipeline.
@@ -57,11 +59,23 @@ class ICFPipeline:
         model_name: str = "gpt-5.1",
         backend: str = "openai",
         backend_kwargs: dict | None = None,
+        extraction_backend: str = "rlm",
         max_iterations: int = 20,
         verbose: bool = False,
         section_filter: list[str] | None = None,
         debug_log_dir: str | None = None,
+        # RAG-specific parameters (only used when extraction_backend="rag")
+        rag_embedding_deployment: str = "text-embedding-3-large",
+        rag_reranker: str = "local",
+        rag_top_k: int = 20,
+        rag_rerank_top_k: int = 8,
+        rag_num_queries: int = 4,
     ):
+        if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
+            raise ValueError(
+                f"extraction_backend must be one of {_VALID_EXTRACTION_BACKENDS}, "
+                f"got: {extraction_backend!r}"
+            )
         self.protocol_path = protocol_path
         self.template_path = template_path
         self.template_docx_path = template_docx_path
@@ -69,10 +83,16 @@ class ICFPipeline:
         self.model_name = model_name
         self.backend = backend
         self.backend_kwargs = backend_kwargs or {}
+        self.extraction_backend = extraction_backend
         self.max_iterations = max_iterations
         self.verbose = verbose
         self.section_filter = section_filter
         self.debug_log_dir = debug_log_dir
+        self.rag_embedding_deployment = rag_embedding_deployment
+        self.rag_reranker = rag_reranker
+        self.rag_top_k = rag_top_k
+        self.rag_rerank_top_k = rag_rerank_top_k
+        self.rag_num_queries = rag_num_queries
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -114,17 +134,17 @@ class ICFPipeline:
         # -- Stage 3+4+5: Two-phase extract with adaptation ------------------
         debug_logger: ICFDebugLogger | None = None
         if self.debug_log_dir:
-            debug_logger = ICFDebugLogger(log_dir=self.debug_log_dir)
-            print(f"[DEBUG] RLM trace will be saved -> {debug_logger.log_file_path}")
+            if self.extraction_backend != "rlm":
+                print(
+                    f"[DEBUG] --debug-log-dir is only supported for the 'rlm' backend "
+                    f"(current: '{self.extraction_backend}'). Ignoring."
+                )
+            else:
+                debug_logger = ICFDebugLogger(log_dir=self.debug_log_dir)
+                print(f"[DEBUG] RLM trace will be saved -> {debug_logger.log_file_path}")
 
-        engine = ExtractionEngine(
-            model_name=self.model_name,
-            backend=self.backend,
-            backend_kwargs=self.backend_kwargs,
-            max_iterations=self.max_iterations,
-            verbose=self.verbose,
-            debug_logger=debug_logger,
-        )
+        print(f"[EXTRACT] Extraction backend: {self.extraction_backend.upper()}")
+        engine = self._build_engine(debug_logger, protocol)
 
         # Split variables into trigger (adaptation seeds) and the rest.
         trigger_ids_in_run = ADAPTATION_TRIGGER_IDS & {v.section_id for v in variables}
@@ -212,9 +232,10 @@ class ICFPipeline:
         elapsed = time.time() - wall_start
         summary = self._build_summary(extractions, validations, elapsed)
 
-        docx_path = os.path.join(self.output_dir, "draft_icf.docx")
-        json_path = os.path.join(self.output_dir, "extraction_report.json")
-        clean_docx_path = os.path.join(self.output_dir, "final_icf.docx")
+        stem = self._output_stem()
+        docx_path = os.path.join(self.output_dir, f"draft_icf_{stem}.docx")
+        json_path = os.path.join(self.output_dir, f"extraction_report_{stem}.json")
+        clean_docx_path = os.path.join(self.output_dir, f"final_icf_{stem}.docx")
 
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
         generate_draft_docx(extractions, validations, final_variables, docx_path)
@@ -249,6 +270,61 @@ class ICFPipeline:
         return result
 
     # ------------------------------------------------------------------
+    # Engine factory
+    # ------------------------------------------------------------------
+
+    def _build_engine(self, debug_logger: "ICFDebugLogger | None", protocol=None):
+        """Instantiate the correct extraction engine for self.extraction_backend."""
+        if self.extraction_backend == "rlm":
+            return ExtractionEngine(
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                max_iterations=self.max_iterations,
+                verbose=self.verbose,
+                debug_logger=debug_logger,
+            )
+        if self.extraction_backend == "naive":
+            from icf.naive_extract import NaiveExtractionEngine
+
+            return NaiveExtractionEngine(
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                verbose=self.verbose,
+            )
+        if self.extraction_backend == "rag":
+            from icf.rag_extract import RAGExtractionEngine
+            from icf.rag_index import ProtocolIndex, RAGConfig, build_embedding_client
+            from icf.rag_rerank import get_reranker
+
+            assert protocol is not None, "protocol (IndexedProtocol) required for RAG backend"
+
+            config = RAGConfig(
+                embedding_model=self.rag_embedding_deployment,
+                retrieval_top_k=self.rag_top_k,
+                rerank_top_k=self.rag_rerank_top_k,
+                num_queries=self.rag_num_queries,
+                reranker=self.rag_reranker,
+            )
+            embedding_client = build_embedding_client(self.backend, self.backend_kwargs)
+            index = ProtocolIndex(protocol, config, embedding_client)
+            index.build()
+
+            reranker = get_reranker(config)
+            return RAGExtractionEngine(
+                protocol_index=index,
+                reranker=reranker,
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                config=config,
+                verbose=self.verbose,
+            )
+
+        raise ValueError(f"Unknown extraction_backend: {self.extraction_backend!r}")
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -279,6 +355,19 @@ class ICFPipeline:
                 f"[EXTRACT] [{idx}/{total}]  -> {ext.status} | "
                 f"Confidence: {ext.confidence} | Evidence: {ev} quote(s)"
             )
+
+    def _output_stem(self) -> str:
+        """Return a short identifier used as a suffix in all output filenames.
+
+        Format: <backend>_<protocol_stem>
+        Example: rag_Prot_000   naive_StudyABC   rlm_Protocol_v2
+        """
+        protocol_stem = os.path.splitext(os.path.basename(self.protocol_path))[0]
+        # Collapse any run of whitespace/special chars to underscores
+        import re
+
+        safe_stem = re.sub(r"[^\w]+", "_", protocol_stem).strip("_")
+        return f"{self.extraction_backend}_{safe_stem}"
 
     @staticmethod
     def _save_adapted_registry(variables: list[TemplateVariable], output_dir: str) -> None:
