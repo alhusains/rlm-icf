@@ -5,6 +5,7 @@ The root_prompt is shown to the RLM orchestrator as its task. The protocol
 text is loaded separately as context_0 in the REPL environment.
 """
 
+from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
 from icf.types import TemplateVariable
 
 
@@ -47,12 +48,12 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "{\n"
         f'    "section_id": "{var.section_id}",\n'
         '    "status": "FOUND" | "NOT_FOUND" | "PARTIAL",\n'
-        '    "filled_template": "The required text with curly-brace variables filled in",\n'
+        '    "filled_template": "PATIENT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",\n'
         '    "evidence": [\n'
         '        {"quote": "Exact verbatim quote from protocol", "page": "Page number"}\n'
         "    ],\n"
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
-        '    "answer": "Extracted text in plain language (Grade 6 reading level)",\n'
+        '    "answer": "Extracted text following UHN Plain Language Guidelines (patient-facing)",\n'
         '    "notes": "Any caveats or items needing manual review"\n'
         "}"
     )
@@ -147,11 +148,18 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "   ```\n\n"
         f"RESULT JSON SCHEMA:\n{json_schema}\n\n"
         "RULES:\n"
-        '1. DO NOT fabricate information. If not found, set status="NOT_FOUND".\n'
-        "2. Every claim must be backed by a verbatim quote from the protocol.\n"
-        "3. Simplify medical language to Grade 6 reading level in the 'answer' field.\n"
+        "1. 'filled_template' is READ BY PATIENTS. It must contain ONLY: required ICF wording "
+        "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+        "missing fields. NEVER include sentences about what was or wasn't found, references to "
+        "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
+        '2. DO NOT fabricate information. If not found, set status="NOT_FOUND".\n'
+        "3. Every claim must be backed by a verbatim quote from the protocol.\n"
         '4. If only partial info is found, set status="PARTIAL" and note what is missing.\n'
-        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY].\n"
+        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n\n"
+        "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
+        + PLAIN_LANGUAGE_SCOPE
+        + UHN_PLAIN_LANGUAGE_GUIDELINES
+        + "\n"
     )
 
     return prompt
