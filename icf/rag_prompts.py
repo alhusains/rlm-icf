@@ -21,6 +21,7 @@ Design choices
 
 from __future__ import annotations
 
+from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
 from icf.rag_index import Chunk
 from icf.types import TemplateVariable
 
@@ -37,12 +38,19 @@ RAG_SYSTEM_PROMPT = (
     "  2. Identify relevant information and note its source (page number).\n"
     "  3. Return a JSON object: start with your reasoning, then the extraction fields.\n\n"
     "Core rules:\n"
+    "  • 'filled_template' is READ BY PATIENTS. It must contain ONLY: required ICF wording "
+    "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+    "missing fields. NEVER include sentences about what was or wasn't found, references to "
+    "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
     "  • Do NOT fabricate information. If a field cannot be answered from the passages,\n"
     "    write [TO BE FILLED MANUALLY] or return status='NOT_FOUND'.\n"
     "  • Every evidence quote must be a verbatim substring from one of the retrieved passages.\n"
-    "  • Write the 'answer' field at a Grade 6 reading level (plain, patient-friendly language).\n"
     "  • The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
-    "  • Tables in retrieved passages contain important procedural data; read them carefully.\n"
+    "  • Tables in retrieved passages contain important procedural data; read them carefully.\n\n"
+    "PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
+    + PLAIN_LANGUAGE_SCOPE
+    + UHN_PLAIN_LANGUAGE_GUIDELINES
+    + "\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -75,8 +83,8 @@ _JSON_SCHEMA_TEMPLATE = """{
     "reasoning": "Step-by-step analysis: reference specific retrieved passages by their [Page X] label, note what information each passage provides, explain how you resolved conditional template blocks (<<...>>, <...>, OR alternatives), and justify your status and confidence choices.",
     "section_id": "{section_id}",
     "status": "FOUND" | "PARTIAL" | "NOT_FOUND",
-    "answer": "Extracted information in plain language at Grade 6 reading level.",
-    "filled_template": "The required/suggested template text with all {{placeholders}} filled, <<conditions>> resolved, and OR alternatives chosen — clean ICF prose with no template markers remaining.",
+    "answer": "Extracted information following UHN Plain Language Guidelines (patient-facing).",
+    "filled_template": "PATIENT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the retrieved passages, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
     "evidence": [
         {"quote": "Exact verbatim quote from one of the retrieved passages", "page": "Page number from [Pages X-Y] label", "section": "Protocol section if identifiable"}
     ],
