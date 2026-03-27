@@ -214,6 +214,17 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help=(
+            "Skip the Stage 8 plain language review pass. "
+            "The review reads the full assembled ICF and annotates terminology "
+            "inconsistencies, passive voice, repetition, and other plain language issues. "
+            "Useful for faster runs or when using --sections (partial ICF)."
+        ),
+    )
+
+    parser.add_argument(
         "--debug-log-dir",
         default=None,
         help=(
@@ -276,6 +287,7 @@ def main() -> int:
         rag_top_k=args.rag_top_k,
         rag_rerank_top_k=args.rag_rerank_top_k,
         rag_num_queries=args.rag_num_queries,
+        skip_review=args.skip_review,
     )
 
     result = pipeline.run()

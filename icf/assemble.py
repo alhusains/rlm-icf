@@ -17,6 +17,7 @@ from docx.shared import Pt, RGBColor
 
 from icf.types import (
     ExtractionResult,
+    ReviewResult,
     TemplateVariable,
     ValidationResult,
 )
@@ -40,6 +41,7 @@ def generate_draft_docx(
     validations: list[ValidationResult],
     variables: list[TemplateVariable],
     output_path: str,
+    review_result: ReviewResult | None = None,
 ) -> str:
     """Create a new DOCX with all sections, filled content, and markers."""
     doc = Document()
@@ -151,6 +153,53 @@ def generate_draft_docx(
                 ir = ip.add_run(f"[VALIDATION] {issue}")
                 _style_run(ir, size=8, colour=_ORANGE)
 
+        # Inline review annotations
+        if review_result:
+            section_flags = [f for f in review_result.flags if f.section_id == var.section_id]
+            for flag in section_flags:
+                flag_colour = {"HIGH": _RED, "MEDIUM": _ORANGE, "LOW": _GREY}.get(
+                    flag.severity, _GREY
+                )
+                fp = doc.add_paragraph()
+                fr = fp.add_run(
+                    f"[REVIEW | {flag.issue_type} | {flag.severity}] "
+                    f'"{flag.flagged_text[:120]}" — {flag.suggestion}'
+                )
+                _style_run(fr, size=8, colour=flag_colour, italic=True)
+                if flag.suggested_fix:
+                    sfp = doc.add_paragraph()
+                    sfr = sfp.add_run(f"    Suggested fix: {flag.suggested_fix}")
+                    _style_run(sfr, size=8, colour=flag_colour)
+
+    # Review appendix
+    if review_result and (review_result.flags or review_result.cross_section_notes):
+        doc.add_page_break()
+        doc.add_heading("APPENDIX: Plain Language Review Flags", level=1)
+        if review_result.cross_section_notes:
+            note_p = doc.add_paragraph()
+            note_r = note_p.add_run(f"Cross-section notes: {review_result.cross_section_notes}")
+            _style_run(note_r, size=9, italic=True, colour=_GREY)
+        if review_result.flags:
+            high_flags = [f for f in review_result.flags if f.severity == "HIGH"]
+            med_flags = [f for f in review_result.flags if f.severity == "MEDIUM"]
+            low_flags = [f for f in review_result.flags if f.severity == "LOW"]
+            for severity_group, colour in (
+                (high_flags, _RED),
+                (med_flags, _ORANGE),
+                (low_flags, _GREY),
+            ):
+                for flag in severity_group:
+                    bp = doc.add_paragraph(style="List Bullet")
+                    br = bp.add_run(
+                        f"[{flag.section_id}] {flag.issue_type} ({flag.severity}): "
+                        f'"{flag.flagged_text[:120]}" — {flag.suggestion}'
+                    )
+                    _style_run(br, size=9, colour=colour)
+                    if flag.suggested_fix:
+                        sfp = doc.add_paragraph()
+                        sfr = sfp.add_run(f"    Suggested fix: {flag.suggested_fix}")
+                        _style_run(sfr, size=9, colour=colour)
+
     doc.save(output_path)
     return output_path
 
@@ -165,12 +214,14 @@ def generate_report_json(
     validations: list[ValidationResult],
     summary: dict[str, Any],
     output_path: str,
+    review_result: ReviewResult | None = None,
 ) -> str:
     """Write the full extraction report as JSON."""
     report = {
         "summary": summary,
         "extractions": [e.to_dict() for e in extractions],
         "validations": [v.to_dict() for v in validations],
+        "review": review_result.to_dict() if review_result else None,
     }
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)

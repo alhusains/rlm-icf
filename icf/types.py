@@ -146,6 +146,44 @@ class ValidationResult:
 
 
 @dataclass
+class ReviewFlag:
+    """A single plain-language issue flagged by the Stage 8 review pass."""
+
+    section_id: str
+    flagged_text: str   # verbatim snippet from the ICF section text
+    issue_type: str     # REPETITION | PASSIVE_VOICE | SENTENCE_TOO_LONG |
+                        # TERMINOLOGY_INCONSISTENCY | UNCLEAR | TONE |
+                        # PLAIN_LANGUAGE_VIOLATION
+    suggestion: str     # brief guidance explaining the issue
+    severity: str       # HIGH | MEDIUM | LOW
+    suggested_fix: str = ""  # ready-to-copy replacement text; empty if not applicable
+
+    def to_dict(self) -> dict:
+        return {
+            "section_id": self.section_id,
+            "flagged_text": self.flagged_text,
+            "issue_type": self.issue_type,
+            "suggestion": self.suggestion,
+            "severity": self.severity,
+            "suggested_fix": self.suggested_fix,
+        }
+
+
+@dataclass
+class ReviewResult:
+    """The output of the Stage 8 plain-language review pass."""
+
+    flags: list[ReviewFlag]
+    cross_section_notes: str  # overall observations spanning multiple sections
+
+    def to_dict(self) -> dict:
+        return {
+            "flags": [f.to_dict() for f in self.flags],
+            "cross_section_notes": self.cross_section_notes,
+        }
+
+
+@dataclass
 class PipelineResult:
     """The complete result of the ICF pipeline."""
 
@@ -155,6 +193,7 @@ class PipelineResult:
     clean_icf_path: str | None
     report_path: str | None
     summary: dict
+    review_result: ReviewResult | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -164,4 +203,5 @@ class PipelineResult:
             "clean_icf_path": self.clean_icf_path,
             "report_path": self.report_path,
             "summary": self.summary,
+            "review": self.review_result.to_dict() if self.review_result else None,
         }
