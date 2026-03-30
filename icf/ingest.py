@@ -16,6 +16,30 @@ from pypdf import PdfReader
 from icf.types import IndexedProtocol, ProtocolPage
 
 
+def _sanitize_text(text: str) -> str:
+    """Replace problematic Unicode whitespace with ASCII equivalents.
+
+    Windows console (cp1252) cannot encode characters like U+202F (narrow
+    no-break space), U+2011 (non-breaking hyphen), etc.  Normalising them
+    here prevents UnicodeEncodeError in downstream code that prints to stdout.
+    """
+    replacements = {
+        "\u202f": " ",   # narrow no-break space -> space
+        "\u00a0": " ",   # no-break space -> space
+        "\u2011": "-",   # non-breaking hyphen -> hyphen
+        "\u2013": "-",   # en-dash -> hyphen
+        "\u2014": "-",   # em-dash -> hyphen
+        "\u2018": "'",   # left single quote
+        "\u2019": "'",   # right single quote
+        "\u201c": '"',   # left double quote
+        "\u201d": '"',   # right double quote
+        "\u2026": "...", # ellipsis
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    return text
+
+
 def load_pdf(filepath: str) -> IndexedProtocol:
     """Parse a PDF protocol into page-indexed text."""
     if not os.path.exists(filepath):
@@ -26,7 +50,7 @@ def load_pdf(filepath: str) -> IndexedProtocol:
     full_text_parts: list[str] = []
 
     for i, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
+        text = _sanitize_text(page.extract_text() or "")
         if text.strip():
             page_obj = ProtocolPage(page_number=i + 1, text=text)
             pages.append(page_obj)
@@ -80,7 +104,7 @@ def load_docx(filepath: str) -> IndexedProtocol:
 
         if tag == "p":
             para = Paragraph(block, doc)
-            text = para.text.strip()
+            text = _sanitize_text(para.text).strip()
             if not text:
                 continue
 
@@ -106,7 +130,7 @@ def load_docx(filepath: str) -> IndexedProtocol:
         elif tag == "tbl":
             table = Table(block, doc)
             for row in table.rows:
-                row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                row_cells = [_sanitize_text(cell.text).strip() for cell in row.cells if cell.text.strip()]
                 if row_cells:
                     text = " | ".join(row_cells)
                     current_parts.append(text)

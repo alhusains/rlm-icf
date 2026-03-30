@@ -1,160 +1,278 @@
+# UHN ICF Automation Pipeline
 
----
+Automatically extracts information from clinical study protocols (PDF/DOCX) and generates Informed Consent Form (ICF) documents aligned with the UHN ICF template.
 
-<h1 align="center" style="font-size:2.8em">
-<span>Recursive Language Models (<span style="color:orange">RLM</span>s)</span>
-</h1>
-
-<p align="center" style="font-size:1.3em">
-  <a href="https://arxiv.org/abs/2512.24601">Full Paper</a> •
-  <a href="https://alexzhang13.github.io/blog/2025/rlm/">Blogpost</a> •
-  <a href="https://alexzhang13.github.io/rlm/">Documentation</a> •
-  <a href="https://github.com/alexzhang13/rlm-minimal">RLM Minimal</a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/alexzhang13/rlm/actions/workflows/style.yml">
-    <img src="https://github.com/alexzhang13/rlm/actions/workflows/style.yml/badge.svg" alt="Style" />
-  </a>
-  <a href="https://github.com/alexzhang13/rlm/actions/workflows/test.yml">
-    <img src="https://github.com/alexzhang13/rlm/actions/workflows/test.yml/badge.svg" alt="Test" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://arxiv.org/abs/2512.24601">
-    <img src="media/paper_preview.png" alt="Paper Preview" width="300"/>
-  </a>
-</p>
+Built on [Recursive Language Models (RLMs)](https://arxiv.org/abs/2512.24601) with support for multiple extraction backends and automated quality evaluation.
 
 ## Overview
-Recursive Language Models (RLMs) are a task-agnostic inference paradigm for language models (LMs) to handle near-infinite length contexts by enabling the LM to *programmatically* examine, decompose, and recursively call itself over its input. RLMs replace the canonical `llm.completion(prompt, model)` call with a `rlm.completion(prompt, model)` call. RLMs offload the context as a variable in a REPL environment that the LM can interact with and launch sub-LM calls inside of.
 
-This repository provides an extensible inference engine for using RLMs around standard API-based and local LLMs. The initial experiments and idea were proposed in a [blogpost](https://alexzhang13.github.io/blog/2025/rlm/) in 2025, with expanded results in an [arXiv preprint](https://arxiv.org/abs/2512.24601).
+The pipeline reads a clinical study protocol, matches it against a structured ICF template registry, and uses LLMs to extract and draft each ICF section. It produces publication-quality DOCX documents with UHN branding, evidence citations, and confidence scoring.
 
-> [!NOTE]
-> This repository contains inference code for RLMs with support for various sandbox environments. Open-source contributions are welcome. This repository is maintained by the authors of the paper from the MIT OASYS lab.
-
-<!-- ## Installation
 ```
-pip install rlm
+Protocol (PDF/DOCX)  +  ICF Template Registry (JSON)
+         |                        |
+         v                        v
+    [1] Ingest              [2] Load Registry
+         |                        |
+         +--------+---------------+
+                  v
+        [3] Phase A: Extract trigger sections (Introduction, Purpose)
+                  |
+                  v
+        [4] Adapt: LLM decides which optional sections to skip
+                  |
+                  v
+        [5] Phase B: Extract remaining sections
+                  |
+                  v
+        [6] Validate (quote grounding + reading level)
+                  |
+                  v
+        [7] Assemble outputs
+              +-- draft_icf_*.docx      (annotated with evidence & status)
+              +-- final_icf_*.docx      (clean, publication-quality, UHN-branded)
+              +-- extraction_report_*.json  (full structured data)
 ```
-To install the latest from `main`:
-```
-pip install git+https://github.com/alexzhang13/rlm.git
-```
-``` -->
 
 ## Quick Setup
-Set up the dependencies with `uv` (or your virtual environment of choice):
+
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv init && uv venv --python 3.12  # change version as needed
-uv pip install -e .
+# Install dependencies
+pip install -e .
+
+# For RAG backend (optional)
+pip install -e ".[rag]"
+
+# For Azure AI Search backend (optional)
+pip install azure-search-documents
+
+# For evaluation framework (optional)
+pip install deepeval textstat
 ```
 
-This project includes a `Makefile` to simplify common tasks.
+Copy `.env.example` to `.env` and fill in your values. A single `.env` file drives all 4 extraction backends **and** the evaluation judge:
 
-- `make install`: Install base dependencies.
-- `make check`: Run linter, formatter, and tests.
-
-To run a quick test, the following will run an RLM query with the OpenAI client using your environment variable `OPENAI_API_KEY` (feel free to change this). This will generate console output as well as a log which you can use with the visualizer to explore the trajectories.
 ```bash
-make quickstart
+cp .env.example .env
 ```
 
-The default RLM client uses a REPL environment that runs on the host process through Python `exec` calls. It uses the same virtual environment as the host process (i.e. it will have access to the same dependencies), but with some limitations in its available global modules. As an example, we can call RLM completions using GPT-5-nano:
-```python
-from rlm import RLM
+```env
+# Azure OpenAI (used by all backends + evaluation judge)
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_DEPLOYMENT=gpt-5.1
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
 
-rlm = RLM(
-    backend="openai",
-    backend_kwargs={"model_name": "gpt-5-nano"},
-    verbose=True,  # For printing to console with rich, disabled by default.
-)
+# OpenAI (alternative — used when --backend openai)
+# OPENAI_API_KEY=sk-your-key
 
-print(rlm.completion("Print me the first 100 powers of two, each on a newline.").response)
+# Azure AI Search (used by azure_ai_search backend)
+AZURE_SEARCH_ENDPOINT=https://your-search.search.windows.net
+AZURE_SEARCH_KEY=your-key
+AZURE_SEARCH_INDEX=your-index-name
+
+# Evaluation judge model override (optional, default: gpt-4o)
+# EVAL_JUDGE_MODEL=gpt-4o
 ```
 
-## REPL Environments
-We support two types of REPL environments -- isolated, and non-isolated. Non-isolated environments (default) run code execution on the same machine as the RLM (e.g. through `exec`), which is pretty reasonable for some local low-risk tasks, like simple benchmarking, but can be problematic if the prompts or tool calls can interact with malicious users. Fully isolated environments used Cloud-based sandboxes (e.g. Prime Sandboxes, [Modal Sandboxes](https://modal.com/docs/guide/sandboxes)) to run code generated by the RLM, ensuring completely isolation from the host process. Environments can be added, but we natively support the following: `local` (default), `modal`, `prime`.
+## Extraction Backends
 
-```python
-rlm = RLM(
-    environment="...", # "local", "docker", "modal", "prime"
-    environment_kwargs={...},
-)
-```
+The pipeline supports **4 extraction backends**, selectable via `--extraction-backend`:
 
-### Local Environments
-The default `local` environment `LocalREPL` runs in the same process as the RLM itself, with specified global and local namespaces for minimal security. Using this REPL is generally safe, but should not be used for production settings. It also shares the same virtual environment (e.g. Conda or uv) as the host process.
+| Backend | Flag | How it works | LLM calls/section |
+|---------|------|--------------|--------------------|
+| **RLM** (default) | `rlm` | Iterative REPL: LLM writes Python code to search the protocol, executes it, refines, calls `FINAL_VAR()` | 1 (multi-iteration) |
+| **Naive** | `naive` | Full protocol text sent in a single LLM call per section | 1 |
+| **RAG** (local) | `rag` | BM25 + dense embeddings + cross-encoder reranking, then single LLM call | 1 |
+| **Azure AI Search** | `azure_ai_search` | Protocol pre-indexed in Azure AI Search, retrieved per section, then LLM call | 1 |
 
-#### Docker <img src="https://github.com/docker.png" alt="Docker" height="20" style="vertical-align: middle;"/> (*requires [Docker installed](https://docs.docker.com/desktop/setup/install/)*)
-We also support a Docker-based environment called `DockerREPL` that launches the REPL environment as a Docker image. By default, we use the `python:3.11-slim` image, but the user can specify custom images as well.
+### Running the Pipeline
 
-### Isolated Environments
-We support several different REPL environments that run on separate, cloud-based machines. Whenever a recursive sub-call is made in these instances, it is requested from the host process.
-
-#### Modal Sandboxes <img src="https://github.com/modal-labs.png" alt="Modal" height="20" style="vertical-align: middle;"/>
-To use [Modal Sandboxes](https://modal.com/docs/guide/sandboxes) as the REPL environment, you need to install and authenticate your Modal account.
 ```bash
-uv add modal  # add modal library
-modal setup   # authenticate account
+# RLM backend (default) with OpenAI
+python run_pipeline.py \
+    --protocol data/Prot_000.pdf \
+    --registry data/standard_ICF_template_breakdown.json \
+    --verbose
+
+# Naive backend with Azure OpenAI
+python run_pipeline.py \
+    --protocol data/Prot_000.pdf \
+    --registry data/standard_ICF_template_breakdown.json \
+    --extraction-backend naive \
+    --backend azure_openai \
+    --azure-endpoint https://your-resource.openai.azure.com/ \
+    --azure-deployment gpt-5.1
+
+# RAG backend (local embeddings + reranking)
+python run_pipeline.py \
+    --protocol data/Prot_000.pdf \
+    --registry data/standard_ICF_template_breakdown.json \
+    --extraction-backend rag \
+    --backend azure_openai \
+    --azure-endpoint https://your-resource.openai.azure.com/ \
+    --azure-deployment gpt-5.1
+
+# Azure AI Search backend (protocol must be pre-indexed)
+python run_pipeline.py \
+    --protocol data/Prot_000.pdf \
+    --registry data/standard_ICF_template_breakdown.json \
+    --extraction-backend azure_ai_search \
+    --backend azure_openai \
+    --azure-endpoint https://your-resource.openai.azure.com/ \
+    --azure-deployment gpt-5.1
+
+# Extract specific sections only
+python run_pipeline.py \
+    --protocol data/Prot_000.pdf \
+    --registry data/standard_ICF_template_breakdown.json \
+    --sections 2.1 3 6 8
 ```
 
-#### Prime Intellect Sandboxes <img src="https://github.com/PrimeIntellect-ai.png" alt="Prime Intellect" height="20" style="vertical-align: middle;"/>
-> [!NOTE]
-> **Prime Intellect Sandboxes** are currently a beta feature. See the [documentation](https://docs.primeintellect.ai/sandboxes/overview) for more information. We noticed slow runtimes when using these sandboxes, which is currently an open issue.
+### Azure AI Search Setup
 
+To use the `azure_ai_search` backend:
 
-To use [Prime Sandboxes](https://docs.primeintellect.ai/sandboxes/sdk), install the SDK and set your API key:
+1. **Index your protocol** in Azure AI Studio: upload the PDF, Azure handles chunking and embedding automatically.
+2. **Note the index name** and set `AZURE_SEARCH_INDEX` in your `.env`.
+3. You can index multiple protocols into separate indexes and switch between them with `--azure-search-index`.
+
+## Evaluation Framework
+
+The pipeline includes an evaluation framework that scores AI-generated ICF sections using LLM-as-a-judge, aligned with the UHN AI-Generated ICF Evaluation Outline (v3, March 2026).
+
+Two evaluation modes are available:
+
+| Mode | Flag | How it works | Cost |
+|------|------|--------------|------|
+| **Combined** (default) | `--eval-mode combined` | 1 LLM call per section scores all rubrics at once via direct Azure OpenAI call | ~$12-15/run |
+| **Detailed** | `--eval-mode detailed` | 1 LLM call per rubric per section via [DeepEval](https://github.com/confident-ai/deepeval) GEval | ~$40-50/run |
+
+Both modes produce the same output format (JSON report + comparison table). Combined mode does not require DeepEval installed.
+
+### Evaluation Dimensions (11 rubrics)
+
+**Ground Truth Comparison:**
+| Dimension | Method | Scope |
+|-----------|--------|-------|
+| Correctness vs approved ICF | LLM judge | All sections (requires ground truth) |
+
+**Task Performance (UHN Rubric Table 6):**
+| Dimension | Method | Scope |
+|-----------|--------|-------|
+| Fidelity to Protocol | LLM judge | All sections |
+| Honesty (no hallucination) | LLM judge | All sections |
+| Over-inclusion | LLM judge | All sections |
+| Inclusive Language | LLM judge | All sections |
+| Reading Level (Flesch-Kincaid) | Deterministic (code) | Sections with 20+ words |
+| Reading Level (LLM) | LLM judge | Sections with 20+ words |
+| Plain Language | LLM judge | Sections with 20+ words |
+
+**Effectiveness (UHN Rubric Table 7):**
+| Dimension | Method | Scope |
+|-----------|--------|-------|
+| Misleading Language | LLM judge | All sections |
+| Risks/Benefits/Voluntariness | LLM judge | Sections 7, 16, 18, 18.1, 18.2, 19, 20 only |
+| Tone (neutral, non-coercive) | LLM judge | All sections |
+
+Each dimension uses the exact **Excellent / Good / Borderline / Poor / Fail** scale from the UHN evaluation outline. Rubrics are scoped to relevant sections — readability rubrics skip short fill-in fields (protocol number, sponsor name), and Risks/Benefits/Voluntariness only runs on sections that actually discuss risks, benefits, alternatives, and voluntariness. When a scoped rubric's target section is not generated, a flag is reported.
+
+### Running Evaluation
+
 ```bash
-uv pip install -e ".[prime]"
-export PRIME_API_KEY=...
+# Compare all 4 backends (combined mode, default)
+python run_eval.py \
+    --reports \
+        rlm=output/extraction_report_rlm_Prot_000.json \
+        naive=output/extraction_report_naive_Prot_000.json \
+        rag=output/extraction_report_rag_Prot_000.json \
+        azure_ai_search=output/extraction_report_azure_ai_search_Prot_000.json \
+    --ground-truth data/ground_truth_icf.docx \
+    --registry data/standard_ICF_template_breakdown.json \
+    --protocol data/Prot_000.pdf \
+    --judge-model gpt-4o \
+    --verbose
+
+# Detailed mode (DeepEval GEval, more granular, higher cost)
+python run_eval.py \
+    --reports rlm=output/extraction_report_rlm_Prot_000.json \
+    --ground-truth data/ground_truth_icf.docx \
+    --eval-mode detailed
+
+# Evaluate specific sections only
+python run_eval.py \
+    --reports rlm=output/extraction_report_rlm_Prot_000.json \
+    --ground-truth data/ground_truth_icf.docx \
+    --sections 3 6 7 8
 ```
 
+Output includes a side-by-side comparison table, coverage analysis, and a detailed JSON report at `output/eval_report_combined.json` or `output/eval_report_detailed.json`.
 
-### Model Providers
-We currently support most major clients (OpenAI, Anthropic), as well as the router platforms (OpenRouter, Portkey, LiteLLM). For local models, we recommend using vLLM (which interfaces with the [OpenAI client](https://github.com/alexzhang13/rlm/blob/main/rlm/clients/openai.py)). To view or add support for more clients, start by looking at [`rlm/clients/`](https://github.com/alexzhang13/rlm/tree/main/rlm/clients).
+## Project Structure
 
-## Relevant Reading
-* **[Dec '25]** [Recursive Language Models arXiv](https://arxiv.org/abs/2512.24601)
-* **[Oct '25]** [Recursive Language Models Blogpost](https://alexzhang13.github.io/blog/2025/rlm/)
+```
+.env.example                 # Unified env var template (copy to .env)
+run_pipeline.py              # CLI entry point for ICF generation
+run_eval.py                  # CLI entry point for evaluation
 
-If you use this code or repository in your research, please cite:
+icf/
+  pipeline.py                # Main orchestrator (7 stages)
+  ingest.py                  # Protocol PDF/DOCX parser
+  registry.py                # ICF template registry loader (JSON/CSV)
+  types.py                   # Data types (TemplateVariable, ExtractionResult, etc.)
+  adapt.py                   # Dynamic section adaptation pass
+  validate.py                # Quote verification + reading level check
+  assemble.py                # Draft ICF DOCX + JSON report generator
+  clean_icf.py               # Publication-quality ICF DOCX generator
+
+  # Extraction backends
+  extract.py                 # RLM extraction engine (default)
+  prompts.py                 # RLM extraction prompts
+  naive_extract.py           # Naive full-context extraction engine
+  naive_prompts.py           # Naive extraction prompts
+  rag_extract.py             # Local RAG extraction engine
+  rag_index.py               # BM25 + dense embedding index
+  rag_query.py               # Multi-query expansion
+  rag_rerank.py              # Cross-encoder reranking
+  rag_prompts.py             # RAG extraction prompts
+  azure_search_extract.py    # Azure AI Search extraction engine
+  azure_search_prompts.py    # Azure AI Search prompts
+
+  # Evaluation
+  eval_rubrics.py            # 11 evaluation dimensions from UHN rubric (with section scoping)
+  eval_combined.py           # Combined evaluator (1 LLM call/section, all rubrics at once)
+  eval_ground_truth.py       # Ground truth DOCX parser
+  eval_runner.py             # Evaluation engine (combined + detailed/DeepEval modes)
+  eval_model.py              # Azure OpenAI judge wrapper for DeepEval
+
+data/
+  standard_ICF_template_breakdown.json   # ICF template registry
+  UHN_logo.png                           # Logo for clean ICF header
+
+EvalRubric/
+  AI-Generated ICF Evaluation Outline - v3 - March2026.docx  # Evaluation criteria
+
+output/                      # Generated at runtime
+  draft_icf_*.docx           # Annotated draft ICF
+  final_icf_*.docx           # Clean publication-quality ICF
+  extraction_report_*.json   # Full structured extraction data
+  adapted_registry.json      # Adaptation decisions audit trail
+  eval_report_combined.json  # Evaluation report (combined mode)
+  eval_report_detailed.json  # Evaluation report (detailed/DeepEval mode)
+```
+
+## Based On
+
+This project builds on the [Recursive Language Models (RLM)](https://arxiv.org/abs/2512.24601) framework. If you use this work, please cite:
 
 ```bibtex
 @misc{zhang2025recursivelanguagemodels,
-      title={Recursive Language Models}, 
+      title={Recursive Language Models},
       author={Alex L. Zhang and Tim Kraska and Omar Khattab},
       year={2025},
       eprint={2512.24601},
       archivePrefix={arXiv},
       primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2512.24601}, 
+      url={https://arxiv.org/abs/2512.24601},
 }
 ```
-
-## Optional Debugging: Visualizing RLM Trajectories
-We additionally provide a simple visualizer tool to examine and view the code, sub-LM, and root-LM calls of an RLM trajectory. To save log files (`.jsonl`) on every completion call that can be viewed in the visualizer, initialize the `RLMLogger` object and pass it into the `RLM` on initialization:
-```python
-from rlm.logger import RLMLogger
-from rlm import RLM
-
-logger = RLMLogger(log_dir="./logs")
-rlm = RLM(
-    ...
-    logger=logger
-)
-```
-
-To run the visualizer locally, we use Node.js and shadcn/ui:
-```
-cd visualizer/
-npm run dev        # default localhost:3001
-```
-
-You'll have the option to select saved `.jsonl` files 
-<p align="center">
-  <img src="media/visualizer.png" alt="RLM Visualizer Example" width="800"/>
-</p>

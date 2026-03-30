@@ -34,7 +34,7 @@ from icf.types import (
 )
 from icf.validate import validate_extractions
 
-_VALID_EXTRACTION_BACKENDS = ("rlm", "naive", "rag")
+_VALID_EXTRACTION_BACKENDS = ("rlm", "naive", "rag", "azure_ai_search")
 
 
 class ICFPipeline:
@@ -70,6 +70,14 @@ class ICFPipeline:
         rag_top_k: int = 20,
         rag_rerank_top_k: int = 8,
         rag_num_queries: int = 4,
+        # Azure AI Search parameters (only used when extraction_backend="azure_ai_search")
+        azure_search_endpoint: str | None = None,
+        azure_search_key: str | None = None,
+        azure_search_index: str | None = None,
+        azure_search_top_k: int = 10,
+        azure_search_num_queries: int = 3,
+        azure_search_semantic: bool = False,
+        azure_search_semantic_config: str | None = None,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
             raise ValueError(
@@ -93,6 +101,13 @@ class ICFPipeline:
         self.rag_top_k = rag_top_k
         self.rag_rerank_top_k = rag_rerank_top_k
         self.rag_num_queries = rag_num_queries
+        self.azure_search_endpoint = azure_search_endpoint
+        self.azure_search_key = azure_search_key
+        self.azure_search_index = azure_search_index
+        self.azure_search_top_k = azure_search_top_k
+        self.azure_search_num_queries = azure_search_num_queries
+        self.azure_search_semantic = azure_search_semantic
+        self.azure_search_semantic_config = azure_search_semantic_config
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -320,6 +335,30 @@ class ICFPipeline:
                 backend_kwargs=self.backend_kwargs,
                 config=config,
                 verbose=self.verbose,
+            )
+
+        if self.extraction_backend == "azure_ai_search":
+            from icf.azure_search_extract import AzureSearchExtractionEngine
+
+            if not self.azure_search_endpoint or not self.azure_search_key or not self.azure_search_index:
+                raise ValueError(
+                    "azure_ai_search backend requires --azure-search-endpoint, "
+                    "--azure-search-key, and --azure-search-index."
+                )
+
+            return AzureSearchExtractionEngine(
+                search_endpoint=self.azure_search_endpoint,
+                search_key=self.azure_search_key,
+                search_index=self.azure_search_index,
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                search_top_k=self.azure_search_top_k,
+                num_queries=self.azure_search_num_queries,
+                use_semantic=self.azure_search_semantic,
+                semantic_config=self.azure_search_semantic_config,
+                verbose=self.verbose,
+                debug_logger=debug_logger,
             )
 
         raise ValueError(f"Unknown extraction_backend: {self.extraction_backend!r}")

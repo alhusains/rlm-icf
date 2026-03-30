@@ -32,8 +32,14 @@ Example usage:
 """
 
 import argparse
+import io
 import os
 import sys
+
+# Fix Windows console encoding for Unicode characters in protocol text
+if sys.stdout.encoding and sys.stdout.encoding.lower().startswith("cp"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Load .env early so os.environ is populated before argparse default evaluation.
 try:
@@ -103,12 +109,13 @@ def main() -> int:
     parser.add_argument(
         "--extraction-backend",
         default="rlm",
-        choices=["rlm", "naive", "rag"],
+        choices=["rlm", "naive", "rag", "azure_ai_search"],
         help=(
             "Extraction strategy (default: rlm). "
             "  rlm   — iterative RLM with code execution and semantic chunking (default). "
             "  naive — full-context single LLM call per section (benchmarking baseline). "
-            "  rag   — retrieval-augmented generation with hybrid search (coming soon). "
+            "  rag   — retrieval-augmented generation with hybrid search. "
+            "  azure_ai_search — RAG via Azure AI Search (protocol must be pre-indexed). "
             "This flag is orthogonal to --backend: e.g., "
             "'--backend azure_openai --extraction-backend naive' is valid."
         ),
@@ -213,6 +220,60 @@ def main() -> int:
         help="Number of search queries generated per ICF section (default: 4).",
     )
 
+    # ------------------------------------------------------------------
+    # Azure AI Search backend options (only used when --extraction-backend azure_ai_search)
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--azure-search-endpoint",
+        default=os.environ.get("AZURE_SEARCH_ENDPOINT"),
+        help=(
+            "Azure AI Search service endpoint "
+            "(e.g. https://my-search.search.windows.net). "
+            "Defaults to AZURE_SEARCH_ENDPOINT env var. "
+            "Required when --extraction-backend azure_ai_search."
+        ),
+    )
+    parser.add_argument(
+        "--azure-search-key",
+        default=os.environ.get("AZURE_SEARCH_KEY"),
+        help=(
+            "API key for the Azure AI Search service. "
+            "Defaults to AZURE_SEARCH_KEY env var. "
+            "Required when --extraction-backend azure_ai_search."
+        ),
+    )
+    parser.add_argument(
+        "--azure-search-index",
+        default=os.environ.get("AZURE_SEARCH_INDEX"),
+        help=(
+            "Name of the Azure AI Search index containing the protocol. "
+            "Defaults to AZURE_SEARCH_INDEX env var. "
+            "Required when --extraction-backend azure_ai_search."
+        ),
+    )
+    parser.add_argument(
+        "--azure-search-top-k",
+        type=int,
+        default=10,
+        help="Number of documents to retrieve per query from Azure AI Search (default: 10).",
+    )
+    parser.add_argument(
+        "--azure-search-num-queries",
+        type=int,
+        default=3,
+        help="Number of search queries generated per ICF section (default: 3).",
+    )
+    parser.add_argument(
+        "--azure-search-semantic",
+        action="store_true",
+        help="Enable semantic search (requires a semantic configuration on the index).",
+    )
+    parser.add_argument(
+        "--azure-search-semantic-config",
+        default=None,
+        help="Name of the semantic configuration on the Azure AI Search index.",
+    )
+
     parser.add_argument(
         "--debug-log-dir",
         default=None,
@@ -276,6 +337,13 @@ def main() -> int:
         rag_top_k=args.rag_top_k,
         rag_rerank_top_k=args.rag_rerank_top_k,
         rag_num_queries=args.rag_num_queries,
+        azure_search_endpoint=args.azure_search_endpoint,
+        azure_search_key=args.azure_search_key,
+        azure_search_index=args.azure_search_index,
+        azure_search_top_k=args.azure_search_top_k,
+        azure_search_num_queries=args.azure_search_num_queries,
+        azure_search_semantic=args.azure_search_semantic,
+        azure_search_semantic_config=args.azure_search_semantic_config,
     )
 
     result = pipeline.run()

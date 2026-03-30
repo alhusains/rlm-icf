@@ -220,3 +220,9 @@ data/
 # ICF pipeline output
 output/
 models/
+
+# Reference / prototype code (contains .env with keys)
+RAG_AISearch/
+
+# DeepEval local cache
+.deepeval/
