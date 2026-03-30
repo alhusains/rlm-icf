@@ -1,10 +1,11 @@
 """
 Validation pipeline for ICF extractions.
 
-Three checks:
-  1. Quote verification  - does the cited quote actually appear in the protocol?
+Four checks:
+  1. Quote verification   - does the cited quote actually appear in the protocol?
   2. Reading level        - is the answer written at Grade 6-8?
-  3. Issue aggregation    - collect all problems for the report.
+  3. Meta-commentary      - does filled_template contain internal process notes?
+  4. Issue aggregation    - collect all problems for the report.
 """
 
 import re
@@ -60,7 +61,70 @@ def _normalise(text: str) -> str:
 
 
 # ------------------------------------------------------------------
-# 2. Reading level
+# 2. Meta-commentary detection
+# ------------------------------------------------------------------
+
+# Patterns that indicate the LLM leaked internal extraction notes into
+# patient-facing text. Each tuple is (label, compiled regex).
+_META_PATTERNS: list[tuple[str, re.Pattern]] = [
+    (
+        "references to source documents",
+        re.compile(
+            # "study documents" or "study document" are never appropriate in patient text.
+            # Do NOT flag bare "protocol" — it legitimately appears in ICF text
+            # (e.g. "The study protocol was approved by the ethics board").
+            r"\bstudy\s+documents?\b|\bclinical\s+trial\s+documents?\b"
+            r"|\bin\s+(the\s+)?(retrieved\s+)?passages?\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "extraction-process commentary",
+        re.compile(
+            # "not found / not described / not specified ... in the protocol/study/passages"
+            r"\b(not\s+)?(clearly\s+)?(found|described|specified|mentioned|stated|provided|available|documented|included)\s+"
+            r"(in\s+the\s+(protocol|study|documents?|passages?)|in\s+these?\s+(passages?|documents?|sources?))\b"
+            r"|not\s+enough\s+information"
+            r"|will\s+need\s+(more\s+)?details?\s+later"
+            r"|more\s+information\s+(is\s+)?(needed|required)"
+            r"|additional\s+information\s+(will\s+be\s+)?needed"
+            r"|cannot\s+be\s+found|could\s+not\s+(be\s+)?found"
+            r"|\bwill\s+need\s+to\s+be\s+(filled|completed|provided)",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def check_meta_commentary(text: str) -> list[str]:
+    """Return a list of issues if *text* contains internal extraction commentary.
+
+    Checks sentence-by-sentence so the issue message can quote the offending
+    sentence rather than just flagging the whole field.
+    """
+    if not text:
+        return []
+
+    issues: list[str] = []
+    # Split into rough sentences for targeted reporting.
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        for label, pattern in _META_PATTERNS:
+            if pattern.search(sentence):
+                short = sentence[:120].replace("\n", " ")
+                issues.append(
+                    f"[META-COMMENTARY] Patient-facing text contains {label}: \"{short}\""
+                )
+                break  # one issue per sentence is enough
+
+    return issues
+
+
+# ------------------------------------------------------------------
+# 3. Reading level
 # ------------------------------------------------------------------
 
 
@@ -113,6 +177,9 @@ def validate_extractions(
             if not ok:
                 short = ev.quote[:80].replace("\n", " ")
                 issues.append(f'Quote not verified in protocol: "{short}..."')
+
+        # Meta-commentary in patient-facing text
+        issues.extend(check_meta_commentary(ext.filled_template))
 
         # Reading level
         grade = check_reading_level(ext.answer)

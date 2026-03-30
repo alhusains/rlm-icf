@@ -10,6 +10,7 @@ through the relevant protocol passages before committing to extraction values
 (chain-of-thought inside structured output).
 """
 
+from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
 from icf.types import TemplateVariable
 
 # ---------------------------------------------------------------------------
@@ -52,12 +53,19 @@ NAIVE_SYSTEM_PROMPT = (
     "  2. Find all relevant passages for the requested ICF section.\n"
     "  3. Return a JSON object with your reasoning and the extracted content.\n\n"
     "Core rules:\n"
+    "  • 'filled_template' is READ BY PATIENTS. It must contain ONLY: required ICF wording "
+    "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+    "missing fields. NEVER include sentences about what was or wasn't found, references to "
+    "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
     "  • Do NOT fabricate information. If information is not in the protocol, say NOT_FOUND.\n"
     "  • Every evidence quote must be a verbatim substring from the protocol text.\n"
-    "  • Write the 'answer' field at a Grade 6 reading level (plain language for patients).\n"
     "  • The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
     "  • If only partial information is found, use status='PARTIAL' and note what is missing.\n"
-    "  • For unfillable placeholders, write [TO BE FILLED MANUALLY].\n"
+    "  • For unfillable placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n\n"
+    "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
+    + PLAIN_LANGUAGE_SCOPE
+    + UHN_PLAIN_LANGUAGE_GUIDELINES
+    + "\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -93,8 +101,8 @@ _JSON_SCHEMA = """{
     "reasoning": "Your step-by-step thought process: which protocol sections/pages you looked at, what you found, what decisions you made for conditional template blocks (<<...>>, <...>, OR alternatives), and why you chose the status and confidence level you did.",
     "section_id": "{section_id}",
     "status": "FOUND" | "PARTIAL" | "NOT_FOUND",
-    "answer": "Extracted information in plain language at Grade 6 reading level.",
-    "filled_template": "The required/suggested template text with all {{placeholders}} filled, <<conditions>> resolved, and OR alternatives chosen — clean ICF prose with no template markers remaining.",
+    "answer": "Extracted information following UHN Plain Language Guidelines (patient-facing).",
+    "filled_template": "PATIENT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
     "evidence": [
         {{"quote": "Exact verbatim quote from the protocol text", "page": "Page number (from --- PAGE X --- markers)", "section": "Protocol section heading if identifiable"}}
     ],

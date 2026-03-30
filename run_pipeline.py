@@ -275,6 +275,17 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help=(
+            "Skip the Stage 8 plain language review pass. "
+            "The review reads the full assembled ICF and annotates terminology "
+            "inconsistencies, passive voice, repetition, and other plain language issues. "
+            "Useful for faster runs or when using --sections (partial ICF)."
+        ),
+    )
+
+    parser.add_argument(
         "--debug-log-dir",
         default=None,
         help=(
@@ -344,6 +355,7 @@ def main() -> int:
         azure_search_num_queries=args.azure_search_num_queries,
         azure_search_semantic=args.azure_search_semantic,
         azure_search_semantic_config=args.azure_search_semantic_config,
+        skip_review=args.skip_review,
     )
 
     result = pipeline.run()

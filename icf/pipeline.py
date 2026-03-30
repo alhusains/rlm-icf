@@ -29,6 +29,7 @@ from icf.registry import load_template_registry
 from icf.types import (
     ExtractionResult,
     PipelineResult,
+    ReviewResult,
     TemplateVariable,
     ValidationResult,
 )
@@ -78,6 +79,7 @@ class ICFPipeline:
         azure_search_num_queries: int = 3,
         azure_search_semantic: bool = False,
         azure_search_semantic_config: str | None = None,
+        skip_review: bool = False,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
             raise ValueError(
@@ -108,6 +110,7 @@ class ICFPipeline:
         self.azure_search_num_queries = azure_search_num_queries
         self.azure_search_semantic = azure_search_semantic
         self.azure_search_semantic_config = azure_search_semantic_config
+        self.skip_review = skip_review
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -241,7 +244,7 @@ class ICFPipeline:
         fully_verified = sum(1 for v in validations if v.quotes_verified and all(v.quotes_verified))
         print(f"[VALIDATE] {fully_verified} fully verified, {total_issues} issues found.")
 
-        # -- Stage 7: Assemble -----------------------------------------------
+        # -- Stage 7: Assemble (paths only — outputs written after review) ----
         os.makedirs(self.output_dir, exist_ok=True)
 
         elapsed = time.time() - wall_start
@@ -252,11 +255,42 @@ class ICFPipeline:
         json_path = os.path.join(self.output_dir, f"extraction_report_{stem}.json")
         clean_docx_path = os.path.join(self.output_dir, f"final_icf_{stem}.docx")
 
+        # -- Stage 8: Review (optional plain-language annotation pass) --------
+        review_result: ReviewResult | None = None
+        if not self.skip_review:
+            from icf.review import ReviewEngine
+
+            print("\n[REVIEW] Running plain language review (Stage 8) ...")
+            if self.section_filter:
+                print(
+                    "[REVIEW] NOTE: Section filter is active — cross-section analysis "
+                    f"covers only: {self.section_filter}"
+                )
+            reviewer = ReviewEngine(
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                verbose=self.verbose,
+            )
+            review_result = reviewer.run_review(extractions, final_variables)
+            n_flags = len(review_result.flags)
+            high = sum(1 for f in review_result.flags if f.severity == "HIGH")
+            medium = sum(1 for f in review_result.flags if f.severity == "MEDIUM")
+            print(f"[REVIEW] {n_flags} flag(s): {high} HIGH, {medium} MEDIUM.")
+            if review_result.cross_section_notes:
+                preview = review_result.cross_section_notes[:200]
+                print(f"[REVIEW] Cross-section notes: {preview}")
+            summary["review_flags"] = n_flags
+        else:
+            print("\n[REVIEW] Skipped (--skip-review).")
+            summary["review_flags"] = 0
+
+        # -- Write outputs (now that review_result is available) --------------
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
-        generate_draft_docx(extractions, validations, final_variables, docx_path)
+        generate_draft_docx(extractions, validations, final_variables, docx_path, review_result)
 
         print(f"[ASSEMBLE] Writing report    -> {json_path}")
-        generate_report_json(extractions, validations, summary, json_path)
+        generate_report_json(extractions, validations, summary, json_path, review_result)
 
         # Resolve the UHN logo from the same directory as the template registry.
         _logo_candidate = os.path.join(
@@ -279,6 +313,7 @@ class ICFPipeline:
             clean_icf_path=clean_docx_path,
             report_path=json_path,
             summary=summary,
+            review_result=review_result,
         )
 
         self.print_summary(result)
@@ -475,6 +510,7 @@ class ICFPipeline:
         print(f"  ADAPTATION_SKIPPED:  {s.get('adaptation_skipped', 0)}")
         print(f"  ERRORS:              {s['errors']}")
         print(f"  Validation issues:   {s['validation_issues']}")
+        print(f"  Review flags:        {s.get('review_flags', 'N/A (skipped)')}")
         print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
         if result.output_docx_path:
