@@ -71,6 +71,7 @@ class ICFPipeline:
         rag_top_k: int = 20,
         rag_rerank_top_k: int = 8,
         rag_num_queries: int = 4,
+        rag_cache_dir: str = ".rag_cache",
         # Azure AI Search parameters (only used when extraction_backend="azure_ai_search")
         azure_search_endpoint: str | None = None,
         azure_search_key: str | None = None,
@@ -103,6 +104,7 @@ class ICFPipeline:
         self.rag_top_k = rag_top_k
         self.rag_rerank_top_k = rag_rerank_top_k
         self.rag_num_queries = rag_num_queries
+        self.rag_cache_dir = rag_cache_dir
         self.azure_search_endpoint = azure_search_endpoint
         self.azure_search_key = azure_search_key
         self.azure_search_index = azure_search_index
@@ -358,7 +360,7 @@ class ICFPipeline:
                 reranker=self.rag_reranker,
             )
             embedding_client = build_embedding_client(self.backend, self.backend_kwargs)
-            index = ProtocolIndex(protocol, config, embedding_client)
+            index = ProtocolIndex(protocol, config, embedding_client, cache_dir=self.rag_cache_dir)
             index.build()
 
             reranker = get_reranker(config)

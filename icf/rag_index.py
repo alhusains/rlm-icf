@@ -36,7 +36,9 @@ ProtocolIndex
 
 from __future__ import annotations
 
+import hashlib
 import os
+import pickle
 import re
 import time
 from dataclasses import dataclass
@@ -617,6 +619,27 @@ def build_embedding_client(backend: str, backend_kwargs: dict) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Embedding cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_protocol_id(source_path: str) -> str:
+    """Extract the leading numeric ID from a protocol filename.
+
+    '21-5995_REBApprovedProtocol.docx' → '21-5995'
+    Falls back to the full stem (first 48 chars) for non-standard names.
+    """
+    name = os.path.splitext(os.path.basename(source_path))[0]
+    m = re.match(r"^(\d[\d\-]*)", name)
+    return m.group(1) if m else name[:48]
+
+
+def _text_fingerprint(text: str) -> str:
+    """8-char MD5 hex of the protocol text — detects file changes cheaply."""
+    return hashlib.md5(text.encode("utf-8", errors="replace")).hexdigest()[:8]
+
+
+# ---------------------------------------------------------------------------
 # ProtocolIndex — top-level orchestrator
 # ---------------------------------------------------------------------------
 
@@ -640,10 +663,12 @@ class ProtocolIndex:
         protocol: IndexedProtocol,
         config: RAGConfig,
         embedding_client: Any,
+        cache_dir: str | None = ".rag_cache",
     ) -> None:
         self.protocol = protocol
         self.config = config
         self._embedding_client = embedding_client
+        self._cache_dir = cache_dir or None  # treat empty string as None
 
         self._small_chunks: list[Chunk] = []
         self._parent_map: dict[str, Chunk] = {}
@@ -668,19 +693,67 @@ class ProtocolIndex:
         bm25 = BM25Index()
         bm25.build(self._small_chunks)
 
-        # Dense embeddings — API calls
-        n_batches = -(-len(self._small_chunks) // self.config.embedding_batch_size)
-        print(
-            f"[RAG] Embedding {len(self._small_chunks)} chunks "
-            f"({n_batches} API batch(es), model: '{self.config.embedding_model}') ..."
-        )
+        # Dense embeddings — served from disk cache when available
         dense = DenseIndex(self.config, self._embedding_client)
-        dense.build(self._small_chunks)
+        cached_matrix = self._load_embedding_cache()
+        if cached_matrix is not None:
+            dense._chunks = self._small_chunks
+            dense._matrix = cached_matrix
+        else:
+            n_batches = -(-len(self._small_chunks) // self.config.embedding_batch_size)
+            print(
+                f"[RAG] Embedding {len(self._small_chunks)} chunks "
+                f"({n_batches} API batch(es), model: '{self.config.embedding_model}') ..."
+            )
+            dense.build(self._small_chunks)
+            self._save_embedding_cache(dense._matrix)
 
         self._retriever = HybridRetriever(bm25, dense, self.config)
 
         elapsed = time.time() - t0
         print(f"[RAG] Index ready. ({elapsed:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # Embedding cache
+    # ------------------------------------------------------------------
+
+    def _cache_path(self) -> str | None:
+        """Return the cache file path for this protocol + config, or None if disabled."""
+        if not self._cache_dir:
+            return None
+        protocol_id = _extract_protocol_id(self.protocol.source_path)
+        fingerprint = _text_fingerprint(self.protocol.full_text)
+        model_safe = re.sub(r"[^\w\-]", "_", self.config.embedding_model)
+        dims = self.config.embedding_dimensions
+        fname = f"{protocol_id}_{model_safe}_{dims}_{fingerprint}.pkl"
+        return os.path.join(self._cache_dir, fname)
+
+    def _load_embedding_cache(self) -> np.ndarray | None:
+        """Return the cached embedding matrix if it exists and is valid, else None."""
+        path = self._cache_path()
+        if path is None or not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+            if data.get("n_chunks") != len(self._small_chunks):
+                print("[RAG] Embedding cache exists but chunk count changed — re-embedding.")
+                return None
+            print(f"[RAG] Loaded embeddings from cache -> {path}")
+            return data["matrix"]
+        except Exception as exc:
+            print(f"[RAG] Cache load failed ({exc}); re-embedding.")
+            return None
+
+    def _save_embedding_cache(self, matrix: np.ndarray | None) -> None:
+        """Persist the embedding matrix to disk for future runs."""
+        path = self._cache_path()
+        if path is None or matrix is None:
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump({"n_chunks": len(self._small_chunks), "matrix": matrix}, f)
+        print(f"[RAG] Embedding cache saved -> {path}")
 
     def retrieve(self, queries: list[str], top_k: int) -> list[Chunk]:
         """Multi-query hybrid retrieval.
