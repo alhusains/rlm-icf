@@ -12,7 +12,9 @@ import re
 
 from icf.debug_logger import ICFDebugLogger
 from icf.prompts import build_extraction_prompt
+from icf.refine_prompts import build_refinement_prompt, build_refinement_setup_code
 from icf.types import Evidence, ExtractionResult, TemplateVariable
+from icf.validate import check_meta_commentary
 from rlm import RLM
 from rlm.utils.prompts import RLM_SYSTEM_PROMPT
 
@@ -48,29 +50,137 @@ def _build_icf_system_prompt(protocol_length: int) -> str:
         "  ✗ 'I cannot continue' / 'I'm sorry, I cannot assist with that'\n"
         "  ✗ Any prose-only response when you still have iterations remaining\n"
         "  If you feel an urge to write any of the above, write a ```repl block instead.\n\n"
-        "FINISHING — read this carefully:\n"
-        "  Once you have gathered enough information:\n"
-        "  1. Build your result dict in a ```repl block.\n"
-        "  2. Serialize it with json.dumps() — FINAL_VAR requires a STRING, not a dict.\n"
-        "  3. Call FINAL_VAR(result_json) on the LAST LINE of that SAME ```repl block.\n"
-        "     FINAL_VAR must be INSIDE a ```repl block — writing it as prose does nothing.\n\n"
-        "  CORRECT example:\n"
+        "FINISHING — follow this two-step pattern exactly:\n"
+        "  STEP A — Verify (run this block, NO FINAL_VAR inside it):\n"
         "  ```repl\n"
-        "  import json\n"
-        "  result_dict = {\"section_id\": \"...\", \"status\": \"FOUND\", ...}\n"
-        "  result_json = json.dumps(result_dict)\n"
-        "  FINAL_VAR(result_json)   # <-- must be the last line, inside this block\n"
+        "  import re, json\n"
+        "  issues = []\n"
+        "  ft = result_dict.get('filled_template', '')\n"
+        "  for m in re.findall(r'{{[^}]+}}|<<[^>]+>>', ft):\n"
+        "      issues.append('Unfilled: ' + m)\n"
+        "  for b in ['not found in', 'study documents', 'cannot be found']:\n"
+        "      if b in ft.lower(): issues.append('Meta-commentary: ' + b)\n"
+        "  if issues:\n"
+        "      for iss in issues: print('FIX: ' + iss)\n"
+        "  else:\n"
+        "      result_json = json.dumps(result_dict)\n"
+        "      print('READY_TO_FINALIZE')\n"
         "  ```\n\n"
-        "  WRONG — these do NOT finish the task:\n"
-        "    ✗  result_json   (bare expression at end of block — not the same as FINAL_VAR)\n"
-        "    ✗  FINAL_VAR(result_dict)  (dict, not string → AttributeError)\n"
-        "    ✗  Writing 'FINAL_VAR(...)' outside a code block (prose — not executed)\n\n"
-        "  RECOVERY RULE: If you have already found the information and built result_dict in\n"
-        "  a previous iteration, do NOT rebuild it. Just call FINAL_VAR(json.dumps(result_dict))\n"
-        "  in your next ```repl block immediately.\n\n"
+        "  STEP B — Finalize (only write this after you see READY_TO_FINALIZE in the output):\n"
+        "  ```repl\n"
+        "  FINAL_VAR(result_json)\n"
+        "  ```\n\n"
+        "  CRITICAL RULES:\n"
+        "    ✗  Never write FINAL_VAR inside an if/else or conditional block\n"
+        "    ✗  Never write FINAL_VAR in the same block as the verification check\n"
+        "    ✗  Never write FINAL_VAR(json.dumps(result_dict)) — result_json must already exist\n"
+        "    ✓  result_json is assigned in Step A's else branch — do NOT redefine it in Step B\n\n"
+        "  RECOVERY RULE: If result_dict was already built in a prior iteration, skip straight\n"
+        "  to Step A. If result_json was already assigned (Step A ran with no issues), write\n"
+        "  Step B immediately.\n\n"
         "  FIRST-RESPONSE RULE: Your very first response MUST contain a ```repl block.\n"
     )
     return RLM_SYSTEM_PROMPT + addendum
+
+
+def _quality_score(result: ExtractionResult) -> int:
+    """Numeric quality score for comparing two results. Higher is better."""
+    status_score = {"FOUND": 30, "PARTIAL": 20, "NOT_FOUND": 5, "ERROR": 0}.get(
+        result.status, 0
+    )
+    confidence_score = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "N/A": 0}.get(
+        result.confidence, 0
+    )
+    return status_score + confidence_score
+
+
+def _is_garbage_result(result: ExtractionResult) -> bool:
+    """Return True when the RLM produced non-JSON/policy-refusal output.
+
+    Two main causes:
+    1. Parser fallback: RLM returned prose, the fallback parser wrapped it as
+       PARTIAL/LOW with empty filled_template and evidence.
+    2. Policy-refusal hallucination: model said "I cannot continue" / "REPL not
+       available" etc. These produce either garbage JSON or short prose answers.
+
+    NOT_FOUND results with empty fields are explicitly excluded — that is the
+    correct and expected output when the protocol contains no relevant information.
+    Flagging them as garbage would cause pointless full-extraction retries.
+    NOT_FOUND/LOW is handled instead by _collect_quality_issues → refinement pass.
+    """
+    refusal_signals = [
+        "repl is not active",
+        "repl is not available",
+        "cannot run repl",
+        "cannot execute repl",
+        "i cannot continue",
+        "this interface does not",
+        "this chat interface",
+        "this interface cannot",
+        "i must stop here",
+    ]
+    raw = (result.raw_response or "").lower()
+    if any(sig in raw for sig in refusal_signals):
+        return True
+    # Empty filled_template + empty evidence = fallback-wrapped prose, but ONLY
+    # for FOUND or PARTIAL — NOT_FOUND legitimately has no template/evidence.
+    if result.status != "NOT_FOUND" and not result.filled_template and not result.evidence:
+        return True
+    return False
+
+
+def _collect_quality_issues(
+    result: ExtractionResult,
+    variable: TemplateVariable,
+    protocol_text: str,
+) -> list[str]:
+    """Return a list of quality problems that warrant a refinement pass.
+
+    Only triggers refinement for issues the RLM can concretely fix:
+      1. Unfilled {{...}} or <<...>> markers left in filled_template.
+      2. Meta-commentary leaking into patient-facing filled_template.
+      3. LOW confidence (signals uncertain extraction; targeted search may help).
+
+    Intentionally NOT triggering for:
+    - PARTIAL status alone: means the protocol genuinely lacks the info.
+      A second pass won't find what isn't there, and just wastes iterations.
+    - Quote verification failures: Unicode chars, footnote numbers, and
+      sub-LLM paraphrasing cause false failures the RLM cannot fix.
+      Quote quality is surfaced in the validate_extractions step instead.
+
+    Returns an empty list when the result is clean enough to keep as-is,
+    or when the status is one that refinement cannot improve.
+    """
+    if result.status in (
+        "SKIPPED",
+        "ERROR",
+        "STANDARD_TEXT",
+        "ADAPTATION_SKIPPED",
+    ):
+        return []
+
+    # NOT_FOUND with HIGH/MEDIUM confidence: the model searched thoroughly and is sure
+    # the info isn't there. A second pass won't find what doesn't exist.
+    # NOT_FOUND with LOW confidence: the model is uncertain — refinement may help.
+    if result.status == "NOT_FOUND" and result.confidence != "LOW":
+        return []
+
+    # Garbage fallback results are handled by the fresh-RLM retry loop.
+    if _is_garbage_result(result):
+        return []
+
+    issues: list[str] = []
+
+    if result.confidence == "LOW":
+        issues.append("confidence is LOW")
+
+    unfilled = re.findall(r"\{\{[^}]+\}\}|<<[^>]+>>", result.filled_template)
+    for m in unfilled[:3]:
+        issues.append(f"unfilled marker in filled_template: {m}")
+
+    issues.extend(check_meta_commentary(result.filled_template))
+
+    return issues
 
 
 class ExtractionEngine:
@@ -126,8 +236,40 @@ class ExtractionEngine:
         last_result: ExtractionResult | None = None
         for attempt in range(1, self.max_retries + 1):
             result = self._run_rlm_extraction(protocol_text, variable)
+
+            if result.status != "ERROR" and _is_garbage_result(result):
+                # Prose/policy-refusal wrapped as PARTIAL — treat as a retriable error.
+                print(
+                    f"[EXTRACT] Section {variable.section_id}: attempt {attempt}/{self.max_retries} "
+                    f"produced non-JSON/garbage output. Retrying with fresh RLM ..."
+                )
+                result = ExtractionResult(
+                    section_id=variable.section_id,
+                    heading=variable.heading,
+                    sub_section=variable.sub_section,
+                    status="ERROR",
+                    answer="",
+                    filled_template="",
+                    evidence=[],
+                    confidence="LOW",
+                    notes="RLM returned non-JSON or policy-refusal output.",
+                    raw_response=result.raw_response,
+                    error="non-JSON/garbage output",
+                )
+
             if result.status != "ERROR":
+                # Good structured result — run quality gate, optionally refine.
+                issues = _collect_quality_issues(result, variable, protocol_text)
+                if issues:
+                    print(
+                        f"[REFINE] Section {variable.section_id}: "
+                        f"{len(issues)} quality issue(s) found — running refinement pass ..."
+                    )
+                    for iss in issues[:4]:
+                        print(f"[REFINE]   - {iss}")
+                    result = self._run_refinement_pass(protocol_text, variable, result, issues)
                 return result
+
             last_result = result
             if attempt < self.max_retries:
                 print(
@@ -190,6 +332,82 @@ class ExtractionEngine:
                 raw_response="",
                 error=f"{type(e).__name__}: {e}",
             )
+
+    def _run_refinement_pass(
+        self,
+        protocol_text: str,
+        variable: TemplateVariable,
+        first_result: ExtractionResult,
+        issues: list[str],
+    ) -> ExtractionResult:
+        """Run a focused second-pass RLM to fix specific quality issues.
+
+        Uses a leaner prompt (no full template symbol guide or UHN guidelines)
+        and a capped iteration budget so it doesn't burn as many tokens as
+        the original extraction.  If the refinement itself errors or produces
+        a worse result, the original first_result is returned unchanged.
+        """
+        # Minimum 10: 2 searches + update + verify + FINAL_VAR = ~5 steps,
+        # plus buffer for the model to reason and retry if verification fails.
+        max_iter = max(10, self._iterations_for(variable) // 2)
+        refinement_prompt = build_refinement_prompt(variable, first_result, issues)
+        setup_code = build_refinement_setup_code(first_result)
+
+        kwargs = {"model_name": self.model_name}
+        kwargs.update(self.backend_kwargs)
+
+        try:
+            rlm = RLM(
+                backend=self.backend,
+                backend_kwargs=kwargs,
+                environment="local",
+                environment_kwargs={"setup_code": setup_code},
+                verbose=self.verbose,
+                max_iterations=max_iter,
+                custom_system_prompt=_build_icf_system_prompt(len(protocol_text)),
+                logger=self.debug_logger,
+            )
+            completion = rlm.completion(
+                prompt=protocol_text,
+                root_prompt=refinement_prompt,
+            )
+            refined = self._parse_response(completion.response, variable)
+
+            if refined.status == "ERROR":
+                print(
+                    f"[REFINE] Section {variable.section_id}: refinement pass errored "
+                    f"({refined.error}) — keeping original result."
+                )
+                return first_result
+
+            if _is_garbage_result(refined):
+                print(
+                    f"[REFINE] Section {variable.section_id}: refinement returned "
+                    "non-JSON/prose output — keeping original result."
+                )
+                return first_result
+
+            if _quality_score(refined) < _quality_score(first_result):
+                print(
+                    f"[REFINE] Section {variable.section_id}: refined result is lower "
+                    f"quality ({refined.status}/{refined.confidence} vs original "
+                    f"{first_result.status}/{first_result.confidence}) — keeping original."
+                )
+                return first_result
+
+            print(
+                f"[REFINE] Section {variable.section_id}: done. "
+                f"Confidence {first_result.confidence} -> {refined.confidence}, "
+                f"Status {first_result.status} -> {refined.status}."
+            )
+            return refined
+
+        except Exception as e:
+            print(
+                f"[REFINE] Section {variable.section_id}: refinement pass raised "
+                f"{type(e).__name__} — keeping original result."
+            )
+            return first_result
 
     # ------------------------------------------------------------------
     # Response parsing
