@@ -219,6 +219,16 @@ def main() -> int:
         default=4,
         help="Number of search queries generated per ICF section (default: 4).",
     )
+    parser.add_argument(
+        "--rag-cache-dir",
+        default=".rag_cache",
+        help=(
+            "Directory for caching protocol embeddings between runs (default: .rag_cache). "
+            "Embeddings are keyed by protocol ID, model, and content fingerprint — "
+            "so re-running the pipeline on the same protocol skips the embedding API calls. "
+            "Pass an empty string to disable caching."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Azure AI Search backend options (only used when --extraction-backend azure_ai_search)
@@ -348,6 +358,7 @@ def main() -> int:
         rag_top_k=args.rag_top_k,
         rag_rerank_top_k=args.rag_rerank_top_k,
         rag_num_queries=args.rag_num_queries,
+        rag_cache_dir=args.rag_cache_dir,
         azure_search_endpoint=args.azure_search_endpoint,
         azure_search_key=args.azure_search_key,
         azure_search_index=args.azure_search_index,
