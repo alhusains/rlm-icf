@@ -27,6 +27,11 @@ rag = [
     "tiktoken>=0.7.0",             # accurate token counting for chunking
     "numpy>=1.26.0",               # cosine similarity over embedding matrix
 ]
+eval = [
+    "python-docx>=1.1.0",          # read ground truth ICF .docx files
+    "textstat>=0.7.0",             # Flesch-Kincaid reading level (deterministic rubric)
+    "deepeval>=2.0.0",             # GEval judge for --eval-mode detailed (optional)
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
