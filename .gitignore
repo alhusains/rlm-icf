@@ -227,3 +227,6 @@ RAG_AISearch/
 
 # DeepEval local cache
 .deepeval/
+
+# RAG cache
+.rag_cache/
