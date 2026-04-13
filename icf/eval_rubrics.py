@@ -16,7 +16,9 @@ Each rubric has:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass
@@ -419,6 +421,131 @@ DETERMINISTIC_RUBRICS = {r.name for r in ALL_RUBRICS if r.deterministic}
 
 # Rubrics scoped to specific sections
 SCOPED_RUBRICS = {r.name: r.applicable_sections for r in ALL_RUBRICS if r.applicable_sections}
+
+
+# ======================================================================
+# Evaluation policy and routing
+# ======================================================================
+
+
+class ScoringMode(str, Enum):
+    """Routing decision for how to score a section's rubric."""
+    SKIP = "SKIP"               # Don't score — record N/A
+    HARD_PENALTY = "HARD_PENALTY"  # Score in code, no judge call
+    SOFT = "SOFT"               # Call judge with caution warning
+    FULL = "FULL"               # Call judge normally
+
+
+@dataclass
+class EvalPolicy:
+    """All configurable scoring policy decisions in one place.
+
+    Modify fields here to adjust evaluation behaviour without touching
+    eval_runner.py or eval_combined.py logic.
+    """
+    # Sections where Honesty rubric is applied (safety-critical only)
+    honesty_sections: list[str] = field(default_factory=lambda: [
+        "7", "16", "18", "18.1", "18.2", "19", "20"
+    ])
+
+    # Minimum evidence relevance level to allow full scoring
+    # "STRONG" = only strong relevance gets full score
+    # "PARTIAL" = partial relevance is enough
+    min_relevance_for_full_score: str = "PARTIAL"
+
+    # Score assigned for HARD_PENALTY routing (hallucination risk cases)
+    hard_penalty_score: float = 0.15
+
+    # Whether to skip GT Correctness when output has placeholders only
+    # and section is not expected in protocol
+    skip_gt_if_placeholders_only: bool = True
+
+    # Whether MEDIUM confidence triggers SOFT routing (vs FULL)
+    medium_confidence_soft: bool = True
+
+
+# Default policy — used when no custom policy is passed
+DEFAULT_POLICY = EvalPolicy()
+
+
+# Placeholder patterns used in filled_template
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]+\}\}|<<[^>]+>>|\[TO BE FILLED MANUALLY\]")
+
+
+def has_placeholders(text: str) -> bool:
+    """Return True if text contains unfilled user-insert markers."""
+    return bool(_PLACEHOLDER_PATTERN.search(text))
+
+
+def _is_concrete_content(text: str) -> bool:
+    """Return True if text has substantive content beyond placeholders."""
+    cleaned = _PLACEHOLDER_PATTERN.sub("", text).strip()
+    return len(cleaned.split()) >= 5
+
+
+def route_section(
+    is_in_protocol: bool,
+    partially_in_protocol: bool,
+    is_standard_text: bool,
+    status: str,
+    confidence: str,
+    has_evidence: bool,
+    text: str,
+    rubric_name: str,
+    policy: EvalPolicy = DEFAULT_POLICY,
+) -> tuple[ScoringMode, str]:
+    """Determine how to score a section for a given rubric.
+
+    Returns (ScoringMode, reason_string).
+
+    Layer 1: Registry gate
+    Layer 2: Status + Confidence routing
+    """
+    placeholders_only = has_placeholders(text) and not _is_concrete_content(text)
+    concrete = _is_concrete_content(text)
+
+    # --- Layer 1: Registry gate ---
+
+    # Standard boilerplate text — skip all grounding rubrics
+    if is_standard_text:
+        return ScoringMode.SKIP, "Standard required text — no grounding evaluation needed"
+
+    # Section not expected in protocol — skip Fidelity and Honesty
+    # GT Correctness handled separately with its own abstention rules
+    if not is_in_protocol and not partially_in_protocol:
+        if rubric_name in ("Fidelity to Protocol", "Honesty"):
+            return ScoringMode.SKIP, "Section not in protocol — grounding rubrics not applicable"
+
+    # Partial protocol sections → soft mode
+    if partially_in_protocol:
+        return ScoringMode.SOFT, "Partially in protocol — soft scoring, judge cautioned about boundary"
+
+    # --- Layer 2: Status + Confidence routing ---
+
+    # Technical error — skip content scoring
+    if status == "ERROR":
+        return ScoringMode.SKIP, "Extraction error — skip content scoring"
+
+    # NOT_FOUND + HIGH/MEDIUM confidence:
+    # Backend searched and confirmed info absent
+    if status == "NOT_FOUND" and confidence in ("HIGH", "MEDIUM"):
+        if concrete:
+            # AI invented content despite confirmed absence — hard penalty
+            return ScoringMode.HARD_PENALTY, "NOT_FOUND + HIGH/MEDIUM confidence but AI generated concrete content — possible hallucination"
+        else:
+            # Correct abstention
+            return ScoringMode.SKIP, "NOT_FOUND + HIGH/MEDIUM confidence — info confirmed absent, correct abstention"
+
+    # LOW confidence + no evidence + concrete claims — hallucination risk
+    if confidence == "LOW" and not has_evidence and concrete and not placeholders_only:
+        return ScoringMode.HARD_PENALTY, "LOW confidence + no evidence + concrete claims — hallucination risk"
+
+    # MEDIUM confidence → soft mode (warn judge)
+    if confidence == "MEDIUM" and policy.medium_confidence_soft:
+        return ScoringMode.SOFT, "MEDIUM confidence — judge cautioned about extraction uncertainty"
+
+    # Everything else → full scoring
+    return ScoringMode.FULL, ""
 
 
 def is_rubric_applicable(rubric: RubricDefinition, section_id: str, text: str) -> tuple[bool, str]:

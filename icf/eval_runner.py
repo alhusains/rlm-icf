@@ -31,12 +31,17 @@ from icf.eval_ground_truth import parse_ground_truth_docx, print_ground_truth_su
 from icf.eval_rubrics import (
     ALL_RUBRICS,
     CONTEXT_RUBRICS,
+    DEFAULT_POLICY,
     DETERMINISTIC_RUBRICS,
     GROUND_TRUTH_REQUIRED,
     GROUND_TRUTH_RUBRICS,
     READING_LEVEL,
     RubricDefinition,
+    ScoringMode,
+    EvalPolicy,
+    has_placeholders,
     is_rubric_applicable,
+    route_section,
 )
 from icf.registry import load_template_registry
 from icf.types import TemplateVariable
@@ -53,8 +58,13 @@ class SectionScore:
 
     rubric_name: str
     score: float  # 0.0 - 1.0
-    grade: str  # Excellent / Good / Borderline / Poor / Fail
+    grade: str  # Excellent / Good / Borderline / Poor / Fail / N/A
     reason: str = ""
+    routing_mode: str = ""          # SKIP / HARD_PENALTY / SOFT / FULL
+    evidence_relevance: str = ""    # STRONG / PARTIAL / WEAK / IRRELEVANT
+    support_level: str = ""         # WITHIN / EXCEEDS / NO_EVIDENCE
+    confidence: str = ""            # HIGH / MEDIUM / LOW
+    extraction_status: str = ""     # FOUND / PARTIAL / NOT_FOUND / ERROR
 
 
 @dataclass
@@ -227,6 +237,34 @@ def _build_test_case(
     return LLMTestCase(**kwargs)
 
 
+def _build_evidence_context(
+    evidence: list[dict],
+    confidence: str,
+    mode: ScoringMode,
+) -> list[str] | None:
+    """Build a targeted evidence context string for the judge.
+
+    Replaces the old protocol[:50000] dump with precise evidence quotes
+    the extractor already found. Returns None if no evidence available.
+    """
+    if not evidence:
+        return None
+
+    lines = [f"Extraction confidence: {confidence}"]
+    if mode == ScoringMode.SOFT:
+        lines.append("Note: Extraction confidence is MEDIUM — evaluate cautiously.")
+    lines.append("\nEvidence quotes retrieved from protocol:")
+    for i, ev in enumerate(evidence[:10], 1):  # cap at 10 quotes
+        quote = ev.get("quote", "").strip()
+        page = ev.get("page", "")
+        section = ev.get("section", "")
+        loc = f"(Page {page}" + (f", {section}" if section else "") + ")"
+        if quote:
+            lines.append(f'  {i}. "{quote}" {loc}')
+
+    return ["\n".join(lines)]
+
+
 def _score_to_grade(score: float) -> str:
     """Convert a 0-1 DeepEval score to Excellent/Good/Borderline/Poor/Fail."""
     if score >= 0.9:
@@ -269,6 +307,7 @@ class ICFEvalRunner:
         rubrics: list[RubricDefinition] | None = None,
         section_filter: list[str] | None = None,
         verbose: bool = False,
+        policy: EvalPolicy | None = None,
     ):
         self.report_paths = report_paths
         self.ground_truth_path = ground_truth_path
@@ -278,6 +317,7 @@ class ICFEvalRunner:
         self.rubrics = rubrics or ALL_RUBRICS
         self.section_filter = section_filter
         self.verbose = verbose
+        self.policy = policy or DEFAULT_POLICY
 
     def run(self) -> dict[str, BackendEvalResult]:
         """Run evaluation across all backends. Returns {backend_name: BackendEvalResult}."""
@@ -434,16 +474,23 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
+            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
                 continue
 
             actual_output = ext.get("filled_template") or ext.get("answer") or ""
+            # For STANDARD_TEXT, use required_text if filled_template is empty
             if not actual_output.strip():
                 continue
 
+            # -- Grounding bundle from extraction report --
+            evidence = ext.get("evidence", [])
+            confidence = ext.get("confidence", "LOW")
+            notes = ext.get("notes", "")
+            has_ev = bool(evidence)
+
             count += 1
             display = var.get_display_name()
-            print(f"\n[EVAL-COMBINED] [{count}/{total}] [{sid}] {display} (status: {status})")
+            print(f"\n[EVAL-COMBINED] [{count}/{total}] [{sid}] {display} (status: {status} | conf: {confidence})")
 
             section_result = SectionEvalResult(
                 section_id=sid,
@@ -458,7 +505,7 @@ class ICFEvalRunner:
                 if applicable:
                     fk_grade = _flesch_kincaid_grade(actual_output)
                     score, grade = _fk_to_score_and_grade(fk_grade)
-                    reason = (
+                    fk_reason = (
                         f"Flesch-Kincaid grade: {fk_grade:.1f}"
                         if fk_grade is not None
                         else "Text too short for FK calculation"
@@ -468,65 +515,170 @@ class ICFEvalRunner:
                             rubric_name="Reading Level (Flesch-Kincaid)",
                             score=score,
                             grade=grade,
-                            reason=reason,
+                            reason=fk_reason,
+                            routing_mode=ScoringMode.FULL,
+                            confidence=confidence,
+                            extraction_status=status,
                         )
                     )
                     if self.verbose:
-                        print(f"  Reading Level: {grade} ({reason})")
+                        print(f"  Reading Level: {grade} ({fk_reason})")
                 elif self.verbose:
                     print(f"  Reading Level (FK): SKIPPED - {skip_reason}")
 
             # -- Combined LLM call for all other rubrics --
             gt_text = ground_truth.get(sid)
 
-            # Filter rubrics: check applicability, GT requirements, deterministic
-            active_rubrics = []
-            skipped_rubrics = []
+            # Filter rubrics: check applicability, GT requirements, deterministic, routing
+            active_rubrics = []       # rubrics that go to the judge
+            active_routing = []       # routing mode per active rubric
+            skipped_rubrics = []      # (name, reason) skipped before judge
+            hard_penalty_rubrics = [] # (name, reason) hard-penalized in code
+
             for r in self.rubrics:
                 if r.deterministic:
                     continue
-                if r.name in GROUND_TRUTH_REQUIRED and not gt_text:
-                    continue
+
+                # GT Correctness abstention-aware skip
+                if r.name in GROUND_TRUTH_REQUIRED:
+                    if not gt_text:
+                        continue
+                    # is_in_protocol=False + placeholders only → skip GT Correctness
+                    if not var.is_in_protocol and not var.partially_in_protocol:
+                        if has_placeholders(actual_output) and self.policy.skip_gt_if_placeholders_only:
+                            skipped_rubrics.append((r.name, "Non-protocol section with placeholders — correct abstention"))
+                            continue
+
+                # Section-scope + min word check
                 applicable, skip_reason = is_rubric_applicable(r, sid, actual_output)
                 if not applicable:
                     skipped_rubrics.append((r.name, skip_reason))
                     continue
+
+                # Honesty scoped to safety sections only
+                if r.name == "Honesty" and sid not in self.policy.honesty_sections:
+                    skipped_rubrics.append((r.name, f"Honesty scoped to safety sections {self.policy.honesty_sections}"))
+                    continue
+
+                # Routing decision
+                mode, route_reason = route_section(
+                    is_in_protocol=var.is_in_protocol,
+                    partially_in_protocol=var.partially_in_protocol,
+                    is_standard_text=var.is_standard_text,
+                    status=status,
+                    confidence=confidence,
+                    has_evidence=has_ev,
+                    text=actual_output,
+                    rubric_name=r.name,
+                    policy=self.policy,
+                )
+
+                if mode == ScoringMode.SKIP:
+                    skipped_rubrics.append((r.name, route_reason))
+                    continue
+                elif mode == ScoringMode.HARD_PENALTY:
+                    hard_penalty_rubrics.append((r, route_reason))
+                    continue
+
                 active_rubrics.append(r)
+                active_routing.append(mode)
 
-            if skipped_rubrics and self.verbose:
-                for rname, reason in skipped_rubrics:
-                    print(f"  {rname}: SKIPPED - {reason}")
+            # Record skipped rubrics as N/A — never silently drop
+            for rname, skip_reason in skipped_rubrics:
+                section_result.scores.append(
+                    SectionScore(
+                        rubric_name=rname,
+                        score=-1.0,
+                        grade="N/A",
+                        reason=skip_reason,
+                        routing_mode=ScoringMode.SKIP,
+                        confidence=confidence,
+                        extraction_status=status,
+                    )
+                )
+                if self.verbose:
+                    print(f"  {rname}: N/A - {skip_reason}")
 
+            # Hard penalties — record without judge call
+            for r, hp_reason in hard_penalty_rubrics:
+                section_result.scores.append(
+                    SectionScore(
+                        rubric_name=r.name,
+                        score=self.policy.hard_penalty_score,
+                        grade="Poor",
+                        reason=hp_reason,
+                        routing_mode=ScoringMode.HARD_PENALTY,
+                        confidence=confidence,
+                        extraction_status=status,
+                    )
+                )
+                if self.verbose:
+                    print(f"  {r.name}: HARD_PENALTY ({hp_reason})")
+
+            # Judge call for active rubrics
             if active_rubrics:
                 scores = evaluate_section_combined(
                     section_id=sid,
                     section_heading=display,
                     actual_output=actual_output,
                     ground_truth=gt_text,
-                    protocol_context=protocol_text,
+                    evidence=evidence,
+                    confidence=confidence,
+                    notes=notes,
+                    routing_modes={r.name: m for r, m in zip(active_rubrics, active_routing)},
                     rubrics=active_rubrics,
                     client=client,
                     model_name=self.judge_model,
                     verbose=self.verbose,
                 )
 
-                for r in active_rubrics:
+                for r, mode in zip(active_rubrics, active_routing):
                     result_data = scores.get(r.name, {
-                        "score": -1.0, "grade": "ERROR", "reason": "Not returned by judge"
+                        "score": -1.0, "grade": "ERROR", "reason": "Not returned by judge",
+                        "evidence_relevance": "", "support_level": "",
                     })
+                    final_score = result_data["score"]
+                    final_grade = result_data["grade"]
+                    final_reason = result_data["reason"]
+                    ev_relevance = result_data.get("evidence_relevance", "")
+                    sup_level = result_data.get("support_level", "")
+
+                    # Apply min_relevance_for_full_score policy post-scoring
+                    # For Fidelity/Honesty: if evidence relevance is below threshold,
+                    # cap score at 0.5 (Borderline) regardless of judge score
+                    if ev_relevance and r.name in ("Fidelity to Protocol", "Honesty"):
+                        relevance_rank = {"STRONG": 3, "PARTIAL": 2, "WEAK": 1, "IRRELEVANT": 0}
+                        min_rank = relevance_rank.get(self.policy.min_relevance_for_full_score, 2)
+                        actual_rank = relevance_rank.get(ev_relevance, 2)
+                        if actual_rank < min_rank and final_score > 0.5:
+                            final_score = 0.5
+                            final_grade = "Borderline"
+                            final_reason = (
+                                f"[Score capped: evidence relevance={ev_relevance} below "
+                                f"policy minimum={self.policy.min_relevance_for_full_score}] "
+                                + final_reason
+                            )
+
                     section_result.scores.append(
                         SectionScore(
                             rubric_name=r.name,
-                            score=result_data["score"],
-                            grade=result_data["grade"],
-                            reason=result_data["reason"],
+                            score=final_score,
+                            grade=final_grade,
+                            reason=final_reason,
+                            routing_mode=mode,
+                            evidence_relevance=ev_relevance,
+                            support_level=sup_level,
+                            confidence=confidence,
+                            extraction_status=status,
                         )
                     )
                     if self.verbose:
                         print(
                             f"  {r.name}: {result_data['grade']} "
-                            f"({result_data['score']:.2f}) - "
-                            f"{result_data['reason'][:100]}"
+                            f"({result_data['score']:.2f}) "
+                            f"[relevance={result_data.get('evidence_relevance','')} "
+                            f"support={result_data.get('support_level','')}] "
+                            f"- {result_data['reason'][:100]}"
                         )
 
             backend_result.sections.append(section_result)
@@ -572,16 +724,21 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            # Skip sections that weren't extracted
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
+            # Skip truly unextracted sections only
+            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
                 continue
 
             actual_output = ext.get("filled_template") or ext.get("answer") or ""
             if not actual_output.strip():
                 continue
 
+            # -- Grounding bundle --
+            evidence = ext.get("evidence", [])
+            confidence = ext.get("confidence", "LOW")
+            has_ev = bool(evidence)
+
             display = var.get_display_name()
-            print(f"\n[EVAL] [{sid}] {display} (status: {status})")
+            print(f"\n[EVAL] [{sid}] {display} (status: {status} | conf: {confidence})")
 
             section_result = SectionEvalResult(
                 section_id=sid,
@@ -596,7 +753,7 @@ class ICFEvalRunner:
                 if applicable:
                     fk_grade = _flesch_kincaid_grade(actual_output)
                     score, grade = _fk_to_score_and_grade(fk_grade)
-                    reason = (
+                    fk_reason = (
                         f"Flesch-Kincaid grade: {fk_grade:.1f}"
                         if fk_grade is not None
                         else "Text too short for FK calculation"
@@ -606,11 +763,14 @@ class ICFEvalRunner:
                             rubric_name="Reading Level (Flesch-Kincaid)",
                             score=score,
                             grade=grade,
-                            reason=reason,
+                            reason=fk_reason,
+                            routing_mode=ScoringMode.FULL,
+                            confidence=confidence,
+                            extraction_status=status,
                         )
                     )
                     if self.verbose:
-                        print(f"  Reading Level: {grade} ({reason})")
+                        print(f"  Reading Level: {grade} ({fk_reason})")
                 elif self.verbose:
                     print(f"  Reading Level (FK): SKIPPED - {skip_reason}")
 
@@ -623,27 +783,96 @@ class ICFEvalRunner:
                 if not metric:
                     continue
 
-                # Check applicability (section scope + min word count)
+                # Section-scope + min word check
                 applicable, skip_reason = is_rubric_applicable(rubric, sid, actual_output)
                 if not applicable:
+                    section_result.scores.append(SectionScore(
+                        rubric_name=rubric.name, score=-1.0, grade="N/A",
+                        reason=skip_reason, routing_mode=ScoringMode.SKIP,
+                        confidence=confidence, extraction_status=status,
+                    ))
                     if self.verbose:
-                        print(f"  {rubric.name}: SKIPPED - {skip_reason}")
+                        print(f"  {rubric.name}: N/A - {skip_reason}")
                     continue
 
-                # Build context depending on what the rubric needs
+                # Honesty scoped to safety sections only
+                if rubric.name == "Honesty" and sid not in self.policy.honesty_sections:
+                    na_reason = f"Honesty scoped to safety sections {self.policy.honesty_sections}"
+                    section_result.scores.append(SectionScore(
+                        rubric_name=rubric.name, score=-1.0, grade="N/A",
+                        reason=na_reason, routing_mode=ScoringMode.SKIP,
+                        confidence=confidence, extraction_status=status,
+                    ))
+                    if self.verbose:
+                        print(f"  {rubric.name}: N/A - {na_reason}")
+                    continue
+
+                # GT Correctness abstention-aware skip
                 gt_text = ground_truth.get(sid) if rubric.name in GROUND_TRUTH_RUBRICS else None
-                context = None
-                if rubric.name in CONTEXT_RUBRICS and protocol_text:
-                    context = [protocol_text[:50000]]  # Trim to avoid token limits
+                if rubric.name in GROUND_TRUTH_REQUIRED:
+                    if not gt_text:
+                        section_result.scores.append(SectionScore(
+                            rubric_name=rubric.name, score=-1.0, grade="N/A",
+                            reason="No ground truth available for this section",
+                            routing_mode=ScoringMode.SKIP,
+                            confidence=confidence, extraction_status=status,
+                        ))
+                        continue
+                    if not var.is_in_protocol and not var.partially_in_protocol:
+                        if has_placeholders(actual_output) and self.policy.skip_gt_if_placeholders_only:
+                            na_reason = "Non-protocol section with placeholders — correct abstention"
+                            section_result.scores.append(SectionScore(
+                                rubric_name=rubric.name, score=-1.0, grade="N/A",
+                                reason=na_reason, routing_mode=ScoringMode.SKIP,
+                                confidence=confidence, extraction_status=status,
+                            ))
+                            if self.verbose:
+                                print(f"  {rubric.name}: N/A - {na_reason}")
+                            continue
 
-                # Only skip rubrics that REQUIRE ground truth (Correctness).
-                # Other rubrics use ground truth as an optional reference.
-                if rubric.name in GROUND_TRUTH_REQUIRED and not gt_text:
+                # Routing decision
+                mode, route_reason = route_section(
+                    is_in_protocol=var.is_in_protocol,
+                    partially_in_protocol=var.partially_in_protocol,
+                    is_standard_text=var.is_standard_text,
+                    status=status,
+                    confidence=confidence,
+                    has_evidence=has_ev,
+                    text=actual_output,
+                    rubric_name=rubric.name,
+                    policy=self.policy,
+                )
+
+                if mode == ScoringMode.SKIP:
+                    section_result.scores.append(SectionScore(
+                        rubric_name=rubric.name, score=-1.0, grade="N/A",
+                        reason=route_reason, routing_mode=ScoringMode.SKIP,
+                        confidence=confidence, extraction_status=status,
+                    ))
+                    if self.verbose:
+                        print(f"  {rubric.name}: N/A - {route_reason}")
                     continue
 
-                # If ground truth is not available for this section but the
-                # rubric accepts it optionally, build a metric variant without
-                # expected_output so DeepEval doesn't complain.
+                if mode == ScoringMode.HARD_PENALTY:
+                    section_result.scores.append(
+                        SectionScore(
+                            rubric_name=rubric.name,
+                            score=self.policy.hard_penalty_score,
+                            grade="Poor",
+                            reason=route_reason,
+                            routing_mode=ScoringMode.HARD_PENALTY,
+                            confidence=confidence,
+                            extraction_status=status,
+                        )
+                    )
+                    if self.verbose:
+                        print(f"  {rubric.name}: HARD_PENALTY ({route_reason})")
+                    continue
+
+                # Build evidence context for the judge instead of protocol dump
+                evidence_context = _build_evidence_context(evidence, confidence, mode)
+
+                # Use GT as expected_output if available
                 use_metric = metric
                 if rubric.name in GROUND_TRUTH_RUBRICS and not gt_text and rubric.name not in GROUND_TRUTH_REQUIRED:
                     use_metric = _build_geval_metric_without_expected(rubric, judge)
@@ -652,26 +881,32 @@ class ICFEvalRunner:
                     section_id=sid,
                     actual_output=actual_output,
                     expected_output=gt_text,
-                    context=context,
+                    context=evidence_context,
                     input_text=var.instructions,
                 )
 
                 try:
                     use_metric.measure(test_case)
-                    score = metric.score
-                    reason = metric.reason or ""
+                    score = use_metric.score
+                    reason = use_metric.reason or ""
                     grade = _score_to_grade(score)
                 except Exception as e:
                     score = -1.0
                     grade = "ERROR"
                     reason = f"{type(e).__name__}: {e}"
 
+                # Note: evidence_relevance and support_level are only available in
+                # combined mode. GEval (detailed mode) returns only score + reason.
+                # Use combined mode for structured grounding analysis.
                 section_result.scores.append(
                     SectionScore(
                         rubric_name=rubric.name,
                         score=score,
                         grade=grade,
                         reason=reason,
+                        routing_mode=mode,
+                        confidence=confidence,
+                        extraction_status=status,
                     )
                 )
 
@@ -870,6 +1105,11 @@ class ICFEvalRunner:
                         "score": s.score,
                         "grade": s.grade,
                         "reason": s.reason,
+                        "routing_mode": s.routing_mode,
+                        "evidence_relevance": s.evidence_relevance,
+                        "support_level": s.support_level,
+                        "confidence": s.confidence,
+                        "extraction_status": s.extraction_status,
                     })
                 sections.append({
                     "section_id": sec.section_id,

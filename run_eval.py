@@ -101,7 +101,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--judge-model",
-        default=os.environ.get("EVAL_JUDGE_MODEL", "gpt-4o"),
+        default=os.environ.get("EVAL_JUDGE_MODEL") or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
         help=(
             "LLM model for the judge (default: gpt-4o). "
             "Set EVAL_JUDGE_MODEL env var or pass directly. "
@@ -148,8 +148,24 @@ def main() -> int:
     # Detect judge backend
     judge_backend = "Azure OpenAI" if os.environ.get("AZURE_OPENAI_ENDPOINT") else "OpenAI"
 
-    # Default output path based on mode
-    output_path = args.output or f"output/eval_report_{args.eval_mode}.json"
+    # Default output path — include backend names + protocol stem to avoid overwrites
+    if args.output:
+        output_path = args.output
+    else:
+        backends_str = "_".join(sorted(report_paths.keys()))
+        # Extract protocol stem from first report path
+        first_report = next(iter(report_paths.values()))
+        report_stem = os.path.splitext(os.path.basename(first_report))[0]
+        # Strip leading "extraction_report_<backend>_" prefix to get protocol name
+        parts = report_stem.split("_")
+        # Find where protocol name starts (after backend name)
+        protocol_stem = report_stem
+        for name in report_paths.keys():
+            prefix = f"extraction_report_{name}_"
+            if report_stem.startswith(prefix):
+                protocol_stem = report_stem[len(prefix):]
+                break
+        output_path = f"output/eval_report_{args.eval_mode}_{backends_str}_{protocol_stem}.json"
 
     mode_label = (
         "Combined (1 call/section)" if args.eval_mode == "combined"
