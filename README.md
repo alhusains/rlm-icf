@@ -148,14 +148,39 @@ Two evaluation modes are available:
 | **Combined** (default) | `--eval-mode combined` | 1 LLM call per section scores all rubrics at once via direct Azure OpenAI call | ~$12-15/run |
 | **Detailed** | `--eval-mode detailed` | 1 LLM call per rubric per section via [DeepEval](https://github.com/confident-ai/deepeval) GEval | ~$40-50/run |
 
-Both modes produce the same output format (JSON report + comparison table). Combined mode does not require DeepEval installed.
+Both modes produce the same JSON output format and comparison table. Combined mode does not require DeepEval installed.
+
+### Evidence-Grounded Scoring
+
+The judge does **not** receive the full protocol text. Instead, it receives the targeted evidence quotes the extraction engine retrieved for that section (stored in `extraction_report_*.json`), along with:
+
+- Extraction confidence (`HIGH` / `MEDIUM` / `LOW`) and status (`FOUND` / `NOT_FOUND` / `PARTIAL` / `ERROR`)
+- Extraction notes from the backend
+- The REB-approved ground truth section (if `--ground-truth` is provided)
+
+This keeps prompts compact, costs low, and ensures the judge scores based on what the backend actually found — not a raw protocol dump.
+
+### Routing Policy
+
+Before calling the judge, each section/rubric pair is routed through a configurable policy (`EvalPolicy` in `eval_rubrics.py`) that determines how to score it:
+
+| Routing Mode | When it applies | Effect |
+|---|---|---|
+| `FULL` | High confidence, strong extraction | Judge scores normally |
+| `SOFT` | Medium confidence or partial protocol coverage | Judge is cautioned about extraction uncertainty |
+| `HARD_PENALTY` | Backend confirmed NOT_FOUND but AI generated concrete content | Fixed low score (0.15) — hallucination flag |
+| `SKIP` | Standard boilerplate, section not in protocol, extraction error, or correct abstention | Recorded as N/A — no judge call |
+
+Fidelity and Honesty rubrics additionally return two judge-assessed fields per section:
+- **Evidence Relevance** (`STRONG` / `PARTIAL` / `WEAK` / `IRRELEVANT`) — how well the retrieved quotes actually support this section
+- **Support Level** (`WITHIN` / `EXCEEDS` / `NO_EVIDENCE`) — whether the AI text stays within what the evidence supports or makes claims beyond it
 
 ### Evaluation Dimensions (11 rubrics)
 
 **Ground Truth Comparison:**
 | Dimension | Method | Scope |
 |-----------|--------|-------|
-| Correctness vs approved ICF | LLM judge | All sections (requires ground truth) |
+| Correctness vs approved ICF | LLM judge | All sections (requires `--ground-truth`) |
 
 **Task Performance (UHN Rubric Table 6):**
 | Dimension | Method | Scope |
@@ -175,12 +200,17 @@ Both modes produce the same output format (JSON report + comparison table). Comb
 | Risks/Benefits/Voluntariness | LLM judge | Sections 7, 16, 18, 18.1, 18.2, 19, 20 only |
 | Tone (neutral, non-coercive) | LLM judge | All sections |
 
-Each dimension uses the exact **Excellent / Good / Borderline / Poor / Fail** scale from the UHN evaluation outline. Rubrics are scoped to relevant sections — readability rubrics skip short fill-in fields (protocol number, sponsor name), and Risks/Benefits/Voluntariness only runs on sections that actually discuss risks, benefits, alternatives, and voluntariness. When a scoped rubric's target section is not generated, a flag is reported.
+Each dimension uses the exact **Excellent / Good / Borderline / Poor / Fail** scale from the UHN evaluation outline. Readability rubrics skip short fill-in fields (protocol number, sponsor name). Risks/Benefits/Voluntariness only runs on sections that discuss those topics. Standard boilerplate sections (e.g. signature blocks) are automatically skipped for grounding rubrics.
 
 ### Running Evaluation
 
+The judge model is read automatically from `AZURE_OPENAI_DEPLOYMENT` in your `.env`. Output files are named to include the backend and protocol so runs never overwrite each other.
+
 ```bash
-# Compare all 4 backends (combined mode, default)
+# Single backend, combined mode (default)
+python run_eval.py --reports rlm=output/extraction_report_rlm_Prot_000.json --ground-truth data/ground_truth_icf.docx
+
+# Compare multiple backends side by side
 python run_eval.py \
     --reports \
         rlm=output/extraction_report_rlm_Prot_000.json \
@@ -188,12 +218,9 @@ python run_eval.py \
         rag=output/extraction_report_rag_Prot_000.json \
         azure_ai_search=output/extraction_report_azure_ai_search_Prot_000.json \
     --ground-truth data/ground_truth_icf.docx \
-    --registry data/standard_ICF_template_breakdown.json \
-    --protocol data/Prot_000.pdf \
-    --judge-model gpt-4o \
     --verbose
 
-# Detailed mode (DeepEval GEval, more granular, higher cost)
+# Detailed mode (DeepEval GEval, 1 call per rubric per section)
 python run_eval.py \
     --reports rlm=output/extraction_report_rlm_Prot_000.json \
     --ground-truth data/ground_truth_icf.docx \
@@ -206,7 +233,26 @@ python run_eval.py \
     --sections 3 6 7 8
 ```
 
-Output includes a side-by-side comparison table, coverage analysis, and a detailed JSON report at `output/eval_report_combined.json` or `output/eval_report_detailed.json`.
+Output: a side-by-side comparison table printed to console and a JSON report saved to `output/eval_report_combined_<backends>_<protocol>.json`.
+
+### Generating a Review Document
+
+After running evaluation, generate a colour-coded Word document for human reviewers:
+
+```bash
+python run_eval_review.py \
+    --eval-report output/eval_report_combined_rlm_Prot_000.json \
+    --extraction-report output/extraction_report_rlm_Prot_000.json \
+    --ground-truth data/ground_truth_icf.docx
+```
+
+The review document contains, per section:
+- AI-generated text vs REB-approved ground truth side by side (blue / green headers)
+- Protocol evidence quotes retrieved by the backend
+- Per-rubric scores colour-coded by grade (green → red), with routing mode, evidence relevance, support level, and judge reasoning
+- A blank reviewer comment box for written feedback
+
+Output is saved to `output/review_<eval_report_stem>.docx`. `--ground-truth` is optional — omit it if you only want to review AI output and rubric scores without the ground truth column.
 
 ## Project Structure
 
@@ -214,6 +260,7 @@ Output includes a side-by-side comparison table, coverage analysis, and a detail
 .env.example                 # Unified env var template (copy to .env)
 run_pipeline.py              # CLI entry point for ICF generation
 run_eval.py                  # CLI entry point for evaluation
+run_eval_review.py           # CLI entry point for review DOCX generation
 
 icf/
   pipeline.py                # Main orchestrator (7 stages)
@@ -239,11 +286,12 @@ icf/
   azure_search_prompts.py    # Azure AI Search prompts
 
   # Evaluation
-  eval_rubrics.py            # 11 evaluation dimensions from UHN rubric (with section scoping)
-  eval_combined.py           # Combined evaluator (1 LLM call/section, all rubrics at once)
+  eval_rubrics.py            # 11 rubric definitions + EvalPolicy routing (ScoringMode: FULL/SOFT/HARD_PENALTY/SKIP)
+  eval_combined.py           # Combined evaluator (1 LLM call/section, all rubrics + evidence grounding)
   eval_ground_truth.py       # Ground truth DOCX parser
   eval_runner.py             # Evaluation engine (combined + detailed/DeepEval modes)
   eval_model.py              # Azure OpenAI judge wrapper for DeepEval
+  eval_review.py             # Review DOCX generator (colour-coded per-section layout)
 
 data/
   standard_ICF_template_breakdown.json   # ICF template registry
@@ -257,8 +305,9 @@ output/                      # Generated at runtime
   final_icf_*.docx           # Clean publication-quality ICF
   extraction_report_*.json   # Full structured extraction data
   adapted_registry.json      # Adaptation decisions audit trail
-  eval_report_combined.json  # Evaluation report (combined mode)
-  eval_report_detailed.json  # Evaluation report (detailed/DeepEval mode)
+  eval_report_combined_<backends>_<protocol>.json   # Evaluation report (combined mode)
+  eval_report_detailed_<backends>_<protocol>.json   # Evaluation report (detailed/DeepEval mode)
+  review_<eval_report_stem>.docx                    # Colour-coded review document for human reviewers
 ```
 
 ## Based On
