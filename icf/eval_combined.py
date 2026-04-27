@@ -43,10 +43,13 @@ def _build_evidence_block(
 ) -> str:
     """Format evidence quotes into a readable block for the judge prompt."""
     lines = [f"Extraction confidence: {confidence}"]
+
+    # Notes first — describe what the backend found, even when few quotes stored
     if notes:
-        lines.append(f"Extraction notes: {notes}")
+        lines.append(f"\nWhat the backend found in the protocol:\n{notes}")
+
     if evidence:
-        lines.append("\nEvidence quotes retrieved from source protocol:")
+        lines.append(f"\nVerbatim evidence quotes ({len(evidence)}):")
         for i, ev in enumerate(evidence[:10], 1):
             quote = ev.get("quote", "").strip()
             page = ev.get("page", "")
@@ -55,7 +58,7 @@ def _build_evidence_block(
             if quote:
                 lines.append(f'  {i}. "{quote}" {loc}')
     else:
-        lines.append("\nNo evidence quotes were retrieved from the protocol.")
+        lines.append("\nNo verbatim evidence quotes were stored for this section.")
     return "\n".join(lines)
 
 
@@ -69,6 +72,10 @@ def _build_combined_prompt(
     notes: str,
     routing_modes: dict[str, ScoringMode],
     rubrics: list[RubricDefinition],
+    instructions: str = "",
+    required_text: str = "",
+    suggested_text: str = "",
+    full_gt_icf: str = "",
 ) -> list[dict]:
     """Build a single prompt that asks the judge to score all rubrics at once."""
 
@@ -107,13 +114,38 @@ def _build_combined_prompt(
         "(only for Fidelity and Honesty rubrics — does the AI text stay within "
         "what the evidence supports, or make claims beyond it?)\n\n"
         f"{GRADE_SCALE}\n"
-        "IMPORTANT RULES:\n"
-        "- Evidence quotes are verbatim excerpts the extraction engine retrieved "
-        "from the protocol. Use them as the grounding reference, not the full protocol.\n"
-        "- Unfilled placeholders like {{PI Name}}, <<insert date>> are EXPECTED "
-        "for admin/user-fill fields. Do NOT penalize these.\n"
-        "- If confidence is LOW or MEDIUM, note uncertainty but do not automatically "
-        "penalize — distinguish extraction issues from content quality issues.\n"
+        "IMPORTANT RULES:\n\n"
+        "1. TASK SCOPE — The AI was given specific instructions for this section "
+        "(shown below). Evaluate whether the AI completed its task correctly. "
+        "Do not penalize the AI for content it was not asked to generate.\n\n"
+        "2. REQUIRED UHN LANGUAGE — Each section has required UHN guideline language "
+        "(shown below). The AI must reflect this language faithfully — same meaning "
+        "and same consent obligation as defined by UHN guidelines. If it is present "
+        "and faithful, give full credit for that component. If it is missing or its "
+        "consent meaning is altered, penalize.\n\n"
+        "3. SUGGESTED TEXT — Each section has optional conditional template content "
+        "(shown below). The AI should include relevant suggested content only when "
+        "the protocol evidence supports it. Do NOT penalize the AI for omitting "
+        "suggested content that the protocol does not support.\n\n"
+        "4. GROUND TRUTH EXTRAS — The REB-approved ground truth may contain "
+        "additional sentences or elaborations beyond the AI's task scope or beyond "
+        "what the protocol evidence supports. Do NOT penalize the AI for omitting "
+        "GT content that goes beyond its task instructions or its evidence. The AI "
+        "is evaluated on whether it correctly completed its task — not on whether "
+        "it matches the GT word for word.\n\n"
+        "5. PLACEHOLDERS — [TO BE FILLED MANUALLY], {{field name}}, <<insert here>> "
+        "in the AI output mean the AI correctly acknowledged that information was "
+        "not available. When the extraction notes confirm the information was not "
+        "found in the protocol, treat placeholders as correct abstention — do NOT "
+        "score as fabrication or failure for Honesty or Fidelity.\n\n"
+        "6. VERIFY USING ALL SIGNALS — Use extraction notes + verbatim quotes + "
+        "ground truth together to verify content. The notes describe what the "
+        "backend actually found in the protocol even when few verbatim quotes are "
+        "stored. Do not conclude fabrication based on missing quotes alone if the "
+        "notes confirm the content exists in the protocol.\n\n"
+        "7. GENUINE FABRICATION — Content that is not in the evidence, not in the "
+        "notes, not in the required/suggested text, and contradicts or goes beyond "
+        "what the GT shows = fabrication. Penalize this firmly.\n\n"
         "- Be specific in your reasoning — cite what the AI text does well or misses.\n"
         "- Each rubric is scored independently.\n\n"
         "Respond ONLY with valid JSON in this exact format (no markdown, no extra text):\n"
@@ -134,7 +166,18 @@ def _build_combined_prompt(
 
     evidence_block = _build_evidence_block(evidence, confidence, notes)
 
-    user_parts = [
+    user_parts = []
+
+    # Full GT ICF — document-level reference so judge understands the full consent story
+    if full_gt_icf:
+        user_parts.append(
+            "=== FULL REB-APPROVED ICF (document-level reference) ===\n"
+            "This is the complete approved ICF for this study. Use it to understand "
+            "the full consent story and context — NOT as a section-by-section answer key.\n\n"
+            + full_gt_icf
+        )
+
+    user_parts += [
         "=== ICF SECTION BEING EVALUATED ===",
         f"Section: [{section_id}] {section_heading}",
         f"\nAI-Generated Text:\n{actual_output}",
@@ -144,9 +187,23 @@ def _build_combined_prompt(
     if caution_block:
         user_parts.append(caution_block)
 
+    # Task context from registry
+    task_block = "\n=== TASK CONTEXT (UHN ICF Guidelines for this section) ==="
+    if instructions:
+        task_block += f"\n\nSection Instructions (what the AI was asked to do):\n{instructions}"
+    if required_text:
+        task_block += f"\n\nRequired UHN Language (must be present and faithful):\n{required_text}"
+    if suggested_text:
+        task_block += (
+            f"\n\nSuggested Template Content (conditional — include only when "
+            f"protocol supports it):\n{suggested_text}"
+        )
+    if instructions or required_text or suggested_text:
+        user_parts.append(task_block)
+
     if ground_truth:
         user_parts.append(
-            f"\n=== REB-APPROVED GROUND TRUTH (reference) ===\n{ground_truth}"
+            f"\n=== REB-APPROVED GROUND TRUTH FOR THIS SECTION (reference) ===\n{ground_truth}"
         )
 
     user_parts.append(f"\n=== RUBRICS TO EVALUATE ===\n{rubric_block}")
@@ -257,12 +314,18 @@ def evaluate_section_combined(
     client,
     model_name: str,
     verbose: bool = False,
+    instructions: str = "",
+    required_text: str = "",
+    suggested_text: str = "",
+    full_gt_icf: str = "",
     # Legacy parameter kept for backwards compatibility — no longer used
     protocol_context: str | None = None,
 ) -> dict[str, dict]:
     """Evaluate a single section across all rubrics in one LLM call.
 
     Uses evidence quotes from the extraction report instead of a protocol dump.
+    Passes UHN registry context (instructions, required_text, suggested_text)
+    so the judge understands the task and can distinguish required from optional content.
 
     Returns
     -------
@@ -282,6 +345,10 @@ def evaluate_section_combined(
         notes=notes,
         routing_modes=routing_modes,
         rubrics=llm_rubrics,
+        instructions=instructions,
+        required_text=required_text,
+        suggested_text=suggested_text,
+        full_gt_icf=full_gt_icf,
     )
 
     try:
@@ -313,3 +380,100 @@ def evaluate_section_combined(
             }
 
     return results
+
+
+# ------------------------------------------------------------------
+# Document-level evaluation (runs once on full concatenated output)
+# ------------------------------------------------------------------
+
+
+def evaluate_document_level(
+    full_text: str,
+    rubric,
+    client,
+    model_name: str,
+    verbose: bool = False,
+) -> dict:
+    """Score a single document-level rubric on the full concatenated ICF output.
+
+    Returns {score, grade, reason, issues}.
+    """
+    system_msg = (
+        "You are an expert clinical research ethics reviewer evaluating an "
+        "AI-generated Informed Consent Form (ICF). You are reviewing the "
+        "ENTIRE document for cross-section quality issues.\n\n"
+        + GRADE_SCALE
+    )
+
+    user_msg = (
+        f"## Rubric: {rubric.name}\n\n"
+        f"{rubric.criteria}\n\n"
+        "---\n\n"
+        "## Full AI-Generated ICF Document\n\n"
+        f"{full_text}\n\n"
+        "---\n\n"
+        "Respond with ONLY valid JSON:\n"
+        "```json\n"
+        "{\n"
+        f'  "{rubric.name}": {{\n'
+        '    "score": <float 0.0-1.0>,\n'
+        '    "grade": "<Excellent|Good|Borderline|Poor|Fail>",\n'
+        '    "reason": "<specific issues found or why the document scores well>",\n'
+        '    "issues": ["<issue 1>", "<issue 2>", "..."]\n'
+        "  }\n"
+        "}\n"
+        "```\n"
+    )
+
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_msg},
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+        )
+        raw = response.choices[0].message.content
+    except Exception as e:
+        if verbose:
+            print(f"  [DOC-LEVEL] LLM call error: {e}")
+        return {
+            "score": -1.0, "grade": "ERROR",
+            "reason": f"{type(e).__name__}: {e}",
+            "issues": [],
+        }
+
+    # Parse response
+    try:
+        cleaned = raw.strip()
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json", 1)[1]
+        if "```" in cleaned:
+            cleaned = cleaned.split("```", 1)[0]
+        parsed = json.loads(cleaned.strip())
+
+        if rubric.name in parsed:
+            data = parsed[rubric.name]
+        else:
+            data = parsed
+
+        score = float(data.get("score", -1.0))
+        grade = data.get("grade", "ERROR")
+        reason = data.get("reason", "")
+        issues = data.get("issues", [])
+
+        valid_grades = {"Excellent", "Good", "Borderline", "Poor", "Fail"}
+        if grade not in valid_grades:
+            grade = "ERROR"
+
+        return {"score": score, "grade": grade, "reason": reason, "issues": issues}
+    except Exception as e:
+        if verbose:
+            print(f"  [DOC-LEVEL] Parse error: {e}\nRaw: {raw[:300]}")
+        return {
+            "score": -1.0, "grade": "ERROR",
+            "reason": f"Failed to parse judge response: {e}",
+            "issues": [],
+        }
