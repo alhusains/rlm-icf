@@ -1,16 +1,17 @@
 """
 Evaluation rubrics for AI-generated ICF quality assessment.
 
-Encodes the 10 evaluation dimensions from the UHN AI-Generated ICF
-Evaluation Outline (v3, March 2026) as structured rubric definitions
-that can be consumed by DeepEval GEval metrics.
+Encodes 10 per-section evaluation dimensions + 1 document-level rubric
+from the UHN AI-Generated ICF Evaluation Outline (v3, March 2026) as
+structured rubric definitions consumed by DeepEval GEval metrics or
+the combined single-call evaluator.
 
 Each rubric has:
   - name:        Short identifier
   - description: What this dimension measures
   - criteria:    The full Excellent/Good/Borderline/Poor/Fail rubric text
   - params:      Which LLMTestCaseParams the GEval metric needs
-  - category:    "task_performance" or "effectiveness"
+  - category:    "task_performance" | "effectiveness" | "document_level"
   - deterministic: True if this should be computed with code, not an LLM judge
 """
 
@@ -100,25 +101,42 @@ HONESTY = RubricDefinition(
     name="Honesty",
     description=(
         "Details that are not available in the source document are correctly "
-        "acknowledged as not available. Fabricated information is penalized."
+        "acknowledged as not available. Fabricated, contradictory, or "
+        "misrepresented information is penalized."
     ),
     criteria=(
-        "Evaluate whether the AI-generated ICF section honestly represents "
-        "what is and is not available in the source protocol. Check for "
-        "hallucinations or fabricated information. If a reference "
-        "(expected_output) from the REB-approved ground truth ICF is provided, "
-        "use it to identify what the approved version included vs omitted — "
-        "any content in the AI output that is neither in the protocol nor in "
-        "the approved ICF is likely hallucinated.\n\n"
-        "Excellent - Missing source information explicitly acknowledged; no "
-        "hallucinations.\n\n"
-        "Good - Minor omissions acknowledged inconsistently.\n\n"
-        "Borderline - Some missing information not acknowledged; partial "
-        "hallucinations.\n\n"
-        "Poor - Many missing details not indicated, use of fabricated "
-        "information instead.\n\n"
-        "Fail - Missing information entirely fabricated; no indication of "
-        "absent protocol information."
+        "Evaluate whether the AI-generated ICF section honestly and accurately "
+        "represents what is and is not available in the source protocol. "
+        "Check for ALL of the following:\n"
+        "- Fabrication/hallucination: Content invented that is not in the evidence\n"
+        "- Contradiction: AI text says something that conflicts with or opposes "
+        "what the evidence quotes actually state\n"
+        "- Misrepresentation: Subtle rewording that changes the meaning — e.g. "
+        "generalizing a specific eligibility criterion, softening a risk, or "
+        "changing quantities/frequencies\n"
+        "- Unclarity: AI text is vague or ambiguous about things the evidence "
+        "is specific about (e.g. evidence says 'weekly for 6 months' but AI "
+        "says 'regular visits')\n"
+        "- Missing acknowledgement: Information not available in the protocol is "
+        "not flagged or acknowledged\n\n"
+        "If a reference (expected_output) from the REB-approved ground truth "
+        "ICF is provided, use it to identify what the approved version included "
+        "vs omitted — any content in the AI output that is neither in the "
+        "evidence nor in the approved ICF is likely hallucinated.\n\n"
+        "Excellent - No fabrication, contradiction, or misrepresentation. "
+        "Missing source information explicitly acknowledged. All claims "
+        "traceable to evidence.\n\n"
+        "Good - Minor issues only. Perhaps one instance of slight vagueness "
+        "or a small detail acknowledged inconsistently. No contradictions.\n\n"
+        "Borderline - Some issues present: missing information not "
+        "acknowledged, minor contradictions with evidence, or subtle "
+        "misrepresentations of specific details.\n\n"
+        "Poor - Multiple issues: fabricated details, contradictions with "
+        "evidence, or significant misrepresentations. Missing details "
+        "not indicated.\n\n"
+        "Fail - Pervasive dishonesty. Information fabricated or directly "
+        "contradicts evidence. No indication of absent protocol information. "
+        "Reader would form a false understanding."
     ),
     params=["actual_output", "expected_output", "context"],
     category="task_performance",
@@ -206,68 +224,43 @@ READING_LEVEL = RubricDefinition(
     min_text_words=20,
 )
 
-READING_LEVEL_LLM = RubricDefinition(
-    name="Reading Level (LLM)",
+LANGUAGE_QUALITY = RubricDefinition(
+    name="Language Quality",
     description=(
-        "LLM-judged assessment of whether the text is written at an "
-        "appropriate reading level for a lay audience (grade 6-8). "
-        "Evaluates actual comprehensibility beyond what formula-based "
-        "metrics can measure."
+        "Combined assessment of reading level, plain language adherence, "
+        "and overall comprehensibility for a lay audience. Covers word choice, "
+        "sentence clarity, jargon handling, and content discipline."
     ),
     criteria=(
-        "Evaluate whether the AI-generated ICF section is written at a "
-        "reading level appropriate for a lay audience (grade 6-8). "
-        "Consider the following:\n"
-        "- Would a person without medical or scientific training understand this?\n"
-        "- Are medical/technical terms explained when first used?\n"
-        "- Are sentences structured simply and clearly?\n"
-        "- Is jargon avoided or properly defined?\n"
-        "- Is the overall text accessible to someone with a grade 6-8 education?\n\n"
-        "Excellent - Text is fully accessible to a lay reader at grade 6 level. "
-        "All medical terms are explained. Sentences are short and clear. "
-        "No jargon or technical language without definition.\n\n"
-        "Good - Text is mostly accessible at grade 7-8 level. Minor instances "
-        "of unexplained terms or slightly complex phrasing, but overall "
-        "understandable.\n\n"
-        "Borderline - Text has noticeable readability issues. Several medical "
-        "terms unexplained, some complex sentence structures. A lay reader "
-        "would struggle with parts.\n\n"
-        "Poor - Text is largely inaccessible. Frequent jargon, complex "
-        "sentences, and unexplained technical concepts. Grade 11-12 level.\n\n"
-        "Fail - Text is not appropriate for a lay audience. Dense technical "
-        "language throughout, no effort to simplify or explain."
-    ),
-    params=["actual_output"],
-    category="task_performance",
-    min_text_words=20,
-)
-
-PLAIN_LANGUAGE = RubricDefinition(
-    name="Plain Language",
-    description=(
-        "Measures adherence to plain language principles: word choice, "
-        "sentence clarity, content discipline and cohesion. Based on UHN "
-        "Writing and Design Guidelines and Plain Language Style Guide."
-    ),
-    criteria=(
-        "Evaluate the AI-generated ICF section for adherence to plain "
-        "language principles. Consider: word choice (common everyday "
-        "language, minimal jargon), sentence clarity (short, simple "
-        "sentences), content discipline (only necessary information), "
-        "and logical flow/cohesion. If a reference (expected_output) from "
-        "the REB-approved ground truth ICF is provided, use it as the "
-        "benchmark for acceptable plain language — the approved ICF was "
+        "Evaluate the AI-generated ICF section for language quality and "
+        "accessibility. This rubric covers reading level (grade 6-8 target), "
+        "plain language principles, and overall comprehensibility.\n\n"
+        "Consider ALL of the following:\n"
+        "- Reading level: Would a person without medical or scientific training "
+        "understand this? Target is grade 6-8.\n"
+        "- Medical/technical terms: Are they explained when first used?\n"
+        "- Sentence structure: Are sentences short, simple, and clearly written?\n"
+        "- Jargon: Is it avoided or properly defined?\n"
+        "- Word choice: Does it use common everyday language?\n"
+        "- Content discipline: Is only necessary information included?\n"
+        "- Logical flow and cohesion: Does the text read naturally?\n\n"
+        "If a reference (expected_output) from the REB-approved ground truth "
+        "ICF is provided, use it as the benchmark — the approved ICF was "
         "written by experts for patient comprehension.\n\n"
-        "Excellent - Fully compliant with plain language guidelines.\n\n"
-        "Good - Minor deviations from guidelines. Mostly clear and plain "
-        "language but could be improved.\n\n"
-        "Borderline - Noticeable deviations from plain language principles; "
-        "some sections would require revisions.\n\n"
-        "Poor - Significant problems; text is unclear or overly complex "
+        "Excellent - Text is fully accessible at grade 6-8 level. All medical "
+        "terms explained. Short, clear sentences. Complies with plain language "
+        "guidelines. Logical flow.\n\n"
+        "Good - Mostly accessible. Minor instances of unexplained terms or "
+        "slightly complex phrasing. Overall understandable with minor plain "
+        "language deviations.\n\n"
+        "Borderline - Noticeable readability issues. Several medical terms "
+        "unexplained, some complex sentence structures. A lay reader would "
+        "struggle with parts. Several plain language deviations.\n\n"
+        "Poor - Largely inaccessible. Frequent jargon, complex sentences, "
+        "unexplained technical concepts. Text is unclear or overly complex "
         "in many places.\n\n"
-        "Fail - Text does not adhere whatsoever to plain language "
-        "guidelines. Most of the content is hard to understand for a "
-        "person with lay knowledge."
+        "Fail - Not appropriate for a lay audience. Dense technical language "
+        "throughout. Does not adhere to plain language guidelines."
     ),
     params=["actual_output", "expected_output"],
     category="task_performance",
@@ -387,6 +380,52 @@ TONE = RubricDefinition(
 )
 
 # ======================================================================
+# Document-level rubric (runs once on full concatenated output, not per-section)
+# ======================================================================
+
+DOCUMENT_QUALITY = RubricDefinition(
+    name="Document Quality",
+    description=(
+        "Whole-document pass checking cross-section consistency, "
+        "abbreviation/term redundancy, repetition, and coherence."
+    ),
+    criteria=(
+        "Evaluate the FULL AI-generated ICF document (all sections concatenated) "
+        "for document-level quality issues that cannot be caught per-section.\n\n"
+        "Check ALL of the following:\n"
+        "- Abbreviation redundancy: Are abbreviations/acronyms defined multiple "
+        "times across sections? (e.g. 'allogeneic hematopoietic cell transplant "
+        "(alloHCT)' explained in 5 places). First use should define it, "
+        "subsequent uses should use the abbreviation only.\n"
+        "- Repetition: Are the same sentences, paragraphs, or explanations "
+        "repeated across sections unnecessarily?\n"
+        "- Terminology consistency: Does the document use the same term for "
+        "the same concept throughout? (e.g. not switching between 'stem cell "
+        "transplant' and 'hematopoietic cell transplant' without linking them)\n"
+        "- Cross-section coherence: Does the document flow logically? Are there "
+        "contradictions between sections? Does information in later sections "
+        "build on earlier sections correctly?\n"
+        "- Information placement: Is information in the right sections or is "
+        "it scattered inappropriately?\n\n"
+        "Excellent - No redundant definitions. No unnecessary repetition. "
+        "Consistent terminology. Logical cross-section flow. Information "
+        "in appropriate sections.\n\n"
+        "Good - Minor issues: 1-2 abbreviations redefined or slight "
+        "terminology inconsistency. Overall coherent.\n\n"
+        "Borderline - Several issues: multiple abbreviations redefined, "
+        "some repetition across sections, or noticeable terminology "
+        "inconsistency.\n\n"
+        "Poor - Significant issues: frequent redundancy, repetition, "
+        "or contradictions between sections.\n\n"
+        "Fail - Document reads as disconnected sections. Pervasive "
+        "redundancy, contradictions, and inconsistent terminology."
+    ),
+    params=["actual_output"],
+    category="document_level",
+    min_text_words=50,
+)
+
+# ======================================================================
 # All rubrics in evaluation order
 # ======================================================================
 
@@ -399,13 +438,15 @@ ALL_RUBRICS: list[RubricDefinition] = [
     OVER_INCLUSION,
     INCLUSIVE_LANGUAGE,
     READING_LEVEL,
-    READING_LEVEL_LLM,
-    PLAIN_LANGUAGE,
+    LANGUAGE_QUALITY,
     # Effectiveness
     MISLEADING_LANGUAGE,
     RISKS_BENEFITS_VOLUNTARINESS,
     TONE,
 ]
+
+# Document-level rubric (not in ALL_RUBRICS — runs separately at end)
+DOCUMENT_LEVEL_RUBRICS: list[RubricDefinition] = [DOCUMENT_QUALITY]
 
 # Rubrics that need protocol context (passed as context in the test case)
 CONTEXT_RUBRICS = {r.name for r in ALL_RUBRICS if "context" in r.params}
@@ -516,8 +557,10 @@ def route_section(
         if rubric_name in ("Fidelity to Protocol", "Honesty"):
             return ScoringMode.SKIP, "Section not in protocol — grounding rubrics not applicable"
 
-    # Partial protocol sections → soft mode
+    # Partial protocol sections — HIGH confidence means backend found what's there
     if partially_in_protocol:
+        if confidence == "HIGH":
+            return ScoringMode.FULL, "Partially in protocol + HIGH confidence — full scoring"
         return ScoringMode.SOFT, "Partially in protocol — soft scoring, judge cautioned about boundary"
 
     # --- Layer 2: Status + Confidence routing ---

@@ -414,6 +414,53 @@ def generate_review_doc(
 
             doc.add_page_break()
 
+        # ---- Document-level scores (if present) ----
+        doc_level = backend_data.get("document_level")
+        if doc_level:
+            doc.add_heading("Document-Level Quality", 2)
+            for dl in doc_level:
+                grade = dl.get("grade", "N/A")
+                score = dl.get("score", -1.0)
+                rubric_name = dl.get("rubric", "")
+                reason = dl.get("reason", "")
+                issues = dl.get("issues", [])
+
+                dl_table = doc.add_table(rows=1, cols=3)
+                dl_table.style = "Table Grid"
+                for cell, txt in zip(dl_table.rows[0].cells, ["Rubric", "Score", "Grade"]):
+                    _clear_cell(cell)
+                    _set_cell_bg(cell, RGBColor(0x42, 0x42, 0x42))
+                    _para(cell, txt, bold=True, colour=_WHITE, size=9)
+
+                row = dl_table.add_row().cells
+                for c in row:
+                    _clear_cell(c)
+                    _set_cell_bg(c, _GRADE_BG.get(grade, _PALE_GREY))
+                    _set_cell_borders(c)
+                _para(row[0], rubric_name, bold=True, size=9,
+                      colour=_GRADE_COLOUR.get(grade, _BLACK))
+                _para(row[1], _score_bar(score), size=9,
+                      colour=_GRADE_COLOUR.get(grade, _BLACK))
+                _para(row[2], grade, bold=True, size=9,
+                      colour=_GRADE_COLOUR.get(grade, _BLACK))
+
+                # Reason
+                if reason:
+                    p = doc.add_paragraph()
+                    run = p.add_run(reason)
+                    run.font.size = Pt(9)
+                    run.italic = True
+
+                # Issues list
+                if issues:
+                    doc.add_heading("Issues Found", 3)
+                    for issue in issues:
+                        p = doc.add_paragraph(style="List Bullet")
+                        run = p.add_run(issue)
+                        run.font.size = Pt(9)
+
+            doc.add_page_break()
+
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     doc.save(output_path)
     print(f"[REVIEW] Review document saved -> {output_path}")

@@ -152,13 +152,28 @@ Both modes produce the same JSON output format and comparison table. Combined mo
 
 ### Evidence-Grounded Scoring
 
-The judge does **not** receive the full protocol text. Instead, it receives the targeted evidence quotes the extraction engine retrieved for that section (stored in `extraction_report_*.json`), along with:
+The judge does **not** receive the full protocol text. Instead, it receives per section:
 
+- Extraction notes (what the backend found — placed first, used as primary context)
+- Verbatim evidence quotes retrieved from the protocol
 - Extraction confidence (`HIGH` / `MEDIUM` / `LOW`) and status (`FOUND` / `NOT_FOUND` / `PARTIAL` / `ERROR`)
-- Extraction notes from the backend
+- **UHN registry context** for this section: task instructions, required UHN guideline language, and conditional suggested text
 - The REB-approved ground truth section (if `--ground-truth` is provided)
+- The full REB-approved ICF concatenated once as document-level context (so the judge understands the complete consent story)
 
-This keeps prompts compact, costs low, and ensures the judge scores based on what the backend actually found — not a raw protocol dump.
+This keeps prompts focused and ensures the judge scores based on task completion and evidence grounding — not mechanical comparison against the ground truth.
+
+#### Judge Scoring Rules
+
+The judge applies 7 explicit rules to ensure accurate scoring:
+
+1. **Task scope** — evaluate whether the AI completed its task per the section instructions, not whether it matches the GT word for word
+2. **Required UHN language** — must be present and faithful to the guideline meaning; present = credit, missing or meaning-altered = penalize
+3. **Suggested text** — only penalize if the protocol supports it but the AI omitted it
+4. **GT extras** — do not penalize the AI for omitting GT content that goes beyond its task scope or what the protocol evidence supports
+5. **Placeholders** — `[TO BE FILLED MANUALLY]`, `{{field}}`, `<<insert>>` where extraction notes confirm info was not found = correct abstention, not fabrication
+6. **All-signals verification** — use notes + quotes + GT together; do not call fabrication from missing quotes alone if notes confirm the content exists in the protocol
+7. **Genuine fabrication** — content not in evidence, notes, or required/suggested text that contradicts or exceeds the GT = penalized firmly
 
 ### Routing Policy
 
@@ -166,8 +181,8 @@ Before calling the judge, each section/rubric pair is routed through a configura
 
 | Routing Mode | When it applies | Effect |
 |---|---|---|
-| `FULL` | High confidence, strong extraction | Judge scores normally |
-| `SOFT` | Medium confidence or partial protocol coverage | Judge is cautioned about extraction uncertainty |
+| `FULL` | High confidence, strong extraction (including partial protocol + HIGH confidence) | Judge scores normally |
+| `SOFT` | Medium confidence, or partial protocol coverage with non-HIGH confidence | Judge is cautioned about extraction uncertainty |
 | `HARD_PENALTY` | Backend confirmed NOT_FOUND but AI generated concrete content | Fixed low score (0.15) — hallucination flag |
 | `SKIP` | Standard boilerplate, section not in protocol, extraction error, or correct abstention | Recorded as N/A — no judge call |
 
@@ -175,7 +190,7 @@ Fidelity and Honesty rubrics additionally return two judge-assessed fields per s
 - **Evidence Relevance** (`STRONG` / `PARTIAL` / `WEAK` / `IRRELEVANT`) — how well the retrieved quotes actually support this section
 - **Support Level** (`WITHIN` / `EXCEEDS` / `NO_EVIDENCE`) — whether the AI text stays within what the evidence supports or makes claims beyond it
 
-### Evaluation Dimensions (11 rubrics)
+### Evaluation Dimensions (10 per-section rubrics + 1 document-level)
 
 **Ground Truth Comparison:**
 | Dimension | Method | Scope |
@@ -186,12 +201,11 @@ Fidelity and Honesty rubrics additionally return two judge-assessed fields per s
 | Dimension | Method | Scope |
 |-----------|--------|-------|
 | Fidelity to Protocol | LLM judge | All sections |
-| Honesty (no hallucination) | LLM judge | All sections |
+| Honesty | LLM judge | All sections — checks fabrication, contradiction, misrepresentation, unclarity, and missing acknowledgement |
 | Over-inclusion | LLM judge | All sections |
 | Inclusive Language | LLM judge | All sections |
 | Reading Level (Flesch-Kincaid) | Deterministic (code) | Sections with 20+ words |
-| Reading Level (LLM) | LLM judge | Sections with 20+ words |
-| Plain Language | LLM judge | Sections with 20+ words |
+| Language Quality | LLM judge | Sections with 20+ words — combined reading level + plain language + comprehensibility |
 
 **Effectiveness (UHN Rubric Table 7):**
 | Dimension | Method | Scope |
@@ -199,6 +213,11 @@ Fidelity and Honesty rubrics additionally return two judge-assessed fields per s
 | Misleading Language | LLM judge | All sections |
 | Risks/Benefits/Voluntariness | LLM judge | Sections 7, 16, 18, 18.1, 18.2, 19, 20 only |
 | Tone (neutral, non-coercive) | LLM judge | All sections |
+
+**Document-Level (1 extra LLM call on full document):**
+| Dimension | Method | Scope |
+|-----------|--------|-------|
+| Document Quality | LLM judge | Full concatenated ICF — abbreviation redundancy, repetition, terminology consistency, cross-section coherence |
 
 Each dimension uses the exact **Excellent / Good / Borderline / Poor / Fail** scale from the UHN evaluation outline. Readability rubrics skip short fill-in fields (protocol number, sponsor name). Risks/Benefits/Voluntariness only runs on sections that discuss those topics. Standard boilerplate sections (e.g. signature blocks) are automatically skipped for grounding rubrics.
 
@@ -286,7 +305,7 @@ icf/
   azure_search_prompts.py    # Azure AI Search prompts
 
   # Evaluation
-  eval_rubrics.py            # 11 rubric definitions + EvalPolicy routing (ScoringMode: FULL/SOFT/HARD_PENALTY/SKIP)
+  eval_rubrics.py            # 10+1 rubric definitions + EvalPolicy routing (ScoringMode: FULL/SOFT/HARD_PENALTY/SKIP)
   eval_combined.py           # Combined evaluator (1 LLM call/section, all rubrics + evidence grounding)
   eval_ground_truth.py       # Ground truth DOCX parser
   eval_runner.py             # Evaluation engine (combined + detailed/DeepEval modes)

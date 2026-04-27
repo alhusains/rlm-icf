@@ -33,6 +33,7 @@ from icf.eval_rubrics import (
     CONTEXT_RUBRICS,
     DEFAULT_POLICY,
     DETERMINISTIC_RUBRICS,
+    DOCUMENT_LEVEL_RUBRICS,
     GROUND_TRUTH_REQUIRED,
     GROUND_TRUTH_RUBRICS,
     READING_LEVEL,
@@ -97,6 +98,7 @@ class BackendEvalResult:
     backend_name: str
     sections: list[SectionEvalResult] = field(default_factory=list)
     coverage: CoverageAnalysis | None = None
+    document_scores: list[dict] = field(default_factory=list)  # document-level rubric results
 
     def avg_score(self, rubric_name: str) -> float | None:
         """Average score for a rubric across all evaluated sections."""
@@ -421,6 +423,19 @@ class ICFEvalRunner:
         else:
             client = openai.OpenAI()
 
+        # Build full GT ICF string once — document-level reference for judge
+        full_gt_icf = ""
+        if ground_truth:
+            gt_parts = []
+            for v in variables:
+                gt_text = ground_truth.get(v.section_id, "")
+                if gt_text.strip():
+                    label = f"[{v.section_id}] {v.heading}"
+                    if v.sub_section:
+                        label += f" > {v.sub_section}"
+                    gt_parts.append(f"=== {label} ===\n{gt_text.strip()}")
+            full_gt_icf = "\n\n".join(gt_parts)
+
         # Evaluate each backend
         results: dict[str, BackendEvalResult] = {}
         for backend_name, report_path in self.report_paths.items():
@@ -434,7 +449,36 @@ class ICFEvalRunner:
                 ground_truth=ground_truth,
                 protocol_text=protocol_text,
                 client=client,
+                full_gt_icf=full_gt_icf,
             )
+
+            # Document-level pass — 1 LLM call on full concatenated output
+            if DOCUMENT_LEVEL_RUBRICS:
+                from icf.eval_combined import evaluate_document_level
+
+                full_text = self._concatenate_backend_output_from_report(report_path)
+                if full_text and len(full_text.split()) >= 50:
+                    print(f"\n[EVAL-COMBINED] Document-level quality pass ({len(full_text.split())} words)...")
+                    for doc_rubric in DOCUMENT_LEVEL_RUBRICS:
+                        doc_result = evaluate_document_level(
+                            full_text=full_text,
+                            rubric=doc_rubric,
+                            client=client,
+                            model_name=self.judge_model,
+                            verbose=self.verbose,
+                        )
+                        result.document_scores.append({
+                            "rubric": doc_rubric.name,
+                            **doc_result,
+                        })
+                        grade = doc_result.get("grade", "ERROR")
+                        score = doc_result.get("score", -1.0)
+                        issues = doc_result.get("issues", [])
+                        print(f"  {doc_rubric.name}: {grade} ({score:.2f})")
+                        if issues and self.verbose:
+                            for issue in issues[:5]:
+                                print(f"    - {issue}")
+
             results[backend_name] = result
 
         return results
@@ -447,6 +491,7 @@ class ICFEvalRunner:
         ground_truth: dict[str, str],
         protocol_text: str | None,
         client,
+        full_gt_icf: str = "",
     ) -> BackendEvalResult:
         """Evaluate a single backend using combined mode (1 call per section)."""
         from icf.eval_combined import evaluate_section_combined
@@ -555,12 +600,8 @@ class ICFEvalRunner:
                     skipped_rubrics.append((r.name, skip_reason))
                     continue
 
-                # Honesty scoped to safety sections only
-                if r.name == "Honesty" and sid not in self.policy.honesty_sections:
-                    skipped_rubrics.append((r.name, f"Honesty scoped to safety sections {self.policy.honesty_sections}"))
-                    continue
-
-                # Routing decision
+                # Routing decision (Honesty skip is handled by route_section
+                # when section is not in protocol — no separate gate needed)
                 mode, route_reason = route_section(
                     is_in_protocol=var.is_in_protocol,
                     partially_in_protocol=var.partially_in_protocol,
@@ -630,6 +671,10 @@ class ICFEvalRunner:
                     client=client,
                     model_name=self.judge_model,
                     verbose=self.verbose,
+                    instructions=getattr(var, "instructions", "") or "",
+                    required_text=getattr(var, "required_text", "") or "",
+                    suggested_text=getattr(var, "suggested_text", "") or "",
+                    full_gt_icf=full_gt_icf,
                 )
 
                 for r, mode in zip(active_rubrics, active_routing):
@@ -795,17 +840,8 @@ class ICFEvalRunner:
                         print(f"  {rubric.name}: N/A - {skip_reason}")
                     continue
 
-                # Honesty scoped to safety sections only
-                if rubric.name == "Honesty" and sid not in self.policy.honesty_sections:
-                    na_reason = f"Honesty scoped to safety sections {self.policy.honesty_sections}"
-                    section_result.scores.append(SectionScore(
-                        rubric_name=rubric.name, score=-1.0, grade="N/A",
-                        reason=na_reason, routing_mode=ScoringMode.SKIP,
-                        confidence=confidence, extraction_status=status,
-                    ))
-                    if self.verbose:
-                        print(f"  {rubric.name}: N/A - {na_reason}")
-                    continue
+                # Honesty skip is handled by route_section when section
+                # is not in protocol — no separate gate needed
 
                 # GT Correctness abstention-aware skip
                 gt_text = ground_truth.get(sid) if rubric.name in GROUND_TRUTH_RUBRICS else None
@@ -952,6 +988,28 @@ class ICFEvalRunner:
                     f"  [FLAG] {rubric.name}: applicable sections not generated: "
                     f"{', '.join(missing)}"
                 )
+
+    # ------------------------------------------------------------------
+    # Document-level helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _concatenate_backend_output_from_report(report_path: str) -> str:
+        """Concatenate all section outputs from an extraction report for document-level eval."""
+        with open(report_path, encoding="utf-8") as f:
+            report = json.load(f)
+        parts = []
+        for ext in report.get("extractions", []):
+            status = ext.get("status", "")
+            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+                continue
+            text = ext.get("filled_template") or ext.get("answer") or ""
+            if not text.strip():
+                continue
+            sid = ext["section_id"]
+            heading = ext.get("heading", "")
+            parts.append(f"=== [{sid}] {heading} ===\n{text.strip()}")
+        return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
     # Coverage analysis
@@ -1146,6 +1204,7 @@ class ICFEvalRunner:
                 "sections": sections,
                 "averages": averages,
                 "coverage": coverage_data,
+                "document_level": backend_result.document_scores if backend_result.document_scores else None,
             }
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
