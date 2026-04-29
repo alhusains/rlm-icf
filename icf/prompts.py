@@ -53,7 +53,7 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         '        {"quote": "Exact verbatim quote from protocol", "page": "Page number"}\n'
         "    ],\n"
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
-        '    "answer": "Extracted text following UHN Plain Language Guidelines (patient-facing)",\n'
+        '    "answer": "Plain-language summary of what was found by the extraction process (not patient-facing)",\n'
         '    "notes": "Any caveats or items needing manual review"\n'
         "}"
     )
