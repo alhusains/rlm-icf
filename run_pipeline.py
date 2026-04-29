@@ -294,6 +294,16 @@ def main() -> int:
             "Useful for faster runs or when using --sections (partial ICF)."
         ),
     )
+    parser.add_argument(
+        "--skip-remediation",
+        action="store_true",
+        help=(
+            "Skip the Stage 9 HIGH flag remediation pass. "
+            "When enabled, HIGH-severity review flags and cross-section terminology "
+            "issues are annotated in the report but no automatic fixes are applied. "
+            "Implies review still runs (unless --skip-review is also set)."
+        ),
+    )
 
     parser.add_argument(
         "--debug-log-dir",
@@ -367,6 +377,7 @@ def main() -> int:
         azure_search_semantic=args.azure_search_semantic,
         azure_search_semantic_config=args.azure_search_semantic_config,
         skip_review=args.skip_review,
+        skip_remediation=args.skip_remediation,
     )
 
     result = pipeline.run()
