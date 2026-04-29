@@ -29,6 +29,7 @@ from icf.registry import load_template_registry
 from icf.types import (
     ExtractionResult,
     PipelineResult,
+    RemediationResult,
     ReviewResult,
     TemplateVariable,
     ValidationResult,
@@ -81,6 +82,7 @@ class ICFPipeline:
         azure_search_semantic: bool = False,
         azure_search_semantic_config: str | None = None,
         skip_review: bool = False,
+        skip_remediation: bool = False,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
             raise ValueError(
@@ -113,6 +115,7 @@ class ICFPipeline:
         self.azure_search_semantic = azure_search_semantic
         self.azure_search_semantic_config = azure_search_semantic_config
         self.skip_review = skip_review
+        self.skip_remediation = skip_remediation
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -287,17 +290,52 @@ class ICFPipeline:
             print("\n[REVIEW] Skipped (--skip-review).")
             summary["review_flags"] = 0
 
-        # -- Write outputs (now that review_result is available) --------------
+        # -- Stage 9: Remediation (HIGH flag fixes + cross-section rules) ----
+        remediation_result: RemediationResult | None = None
+        if not self.skip_review and not self.skip_remediation and review_result:
+            high_count = sum(1 for f in review_result.flags if f.severity == "HIGH")
+            has_notes = bool(review_result.cross_section_notes.strip())
+            if high_count > 0 or has_notes:
+                from icf.remediate import RemediationEngine
+
+                print(
+                    f"\n[REMEDIATE] Running Stage 9 remediation "
+                    f"({high_count} HIGH flag(s), cross-section notes: {bool(has_notes)}) ..."
+                )
+                remediator = RemediationEngine(
+                    model_name=self.model_name,
+                    backend=self.backend,
+                    backend_kwargs=self.backend_kwargs,
+                    verbose=self.verbose,
+                )
+                extractions, remediation_result = remediator.run_remediation(
+                    extractions, final_variables, review_result
+                )
+                n_patched = sum(1 for r in remediation_result.records if r.success)
+                n_total = len(remediation_result.records)
+                print(f"[REMEDIATE] {n_patched}/{n_total} section(s) patched successfully.")
+                if remediation_result.unaddressed_notes:
+                    print(
+                        f"[REMEDIATE] Unaddressed notes (for human review): "
+                        f"{remediation_result.unaddressed_notes[:200]}"
+                    )
+            else:
+                print("\n[REMEDIATE] No HIGH flags or cross-section notes — skipping.")
+        else:
+            if self.skip_remediation:
+                print("\n[REMEDIATE] Skipped (--skip-remediation).")
+
+        # -- Write outputs (now that review_result and remediation are available) --
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
         generate_draft_docx(extractions, validations, final_variables, docx_path, review_result)
 
         print(f"[ASSEMBLE] Writing report    -> {json_path}")
-        generate_report_json(extractions, validations, summary, json_path, review_result)
+        generate_report_json(
+            extractions, validations, summary, json_path, review_result, remediation_result
+        )
 
         # Resolve the UHN logo from the same directory as the template registry.
-        _logo_candidate = os.path.join(
-            os.path.dirname(self.template_path) or ".", "UHN_logo.png"
-        )
+        _logo_candidate = os.path.join(os.path.dirname(self.template_path) or ".", "UHN_logo.png")
         logo_path = _logo_candidate if os.path.isfile(_logo_candidate) else None
 
         print(f"[ASSEMBLE] Writing clean ICF -> {clean_docx_path}")
@@ -316,6 +354,7 @@ class ICFPipeline:
             report_path=json_path,
             summary=summary,
             review_result=review_result,
+            remediation_result=remediation_result,
         )
 
         self.print_summary(result)
@@ -377,7 +416,11 @@ class ICFPipeline:
         if self.extraction_backend == "azure_ai_search":
             from icf.azure_search_extract import AzureSearchExtractionEngine
 
-            if not self.azure_search_endpoint or not self.azure_search_key or not self.azure_search_index:
+            if (
+                not self.azure_search_endpoint
+                or not self.azure_search_key
+                or not self.azure_search_index
+            ):
                 raise ValueError(
                     "azure_ai_search backend requires --azure-search-endpoint, "
                     "--azure-search-key, and --azure-search-index."
@@ -513,6 +556,10 @@ class ICFPipeline:
         print(f"  ERRORS:              {s['errors']}")
         print(f"  Validation issues:   {s['validation_issues']}")
         print(f"  Review flags:        {s.get('review_flags', 'N/A (skipped)')}")
+        if result.remediation_result is not None:
+            n_p = sum(1 for r in result.remediation_result.records if r.success)
+            n_t = len(result.remediation_result.records)
+            print(f"  Sections patched:    {n_p}/{n_t}")
         print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
         if result.output_docx_path:

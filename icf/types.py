@@ -150,12 +150,12 @@ class ReviewFlag:
     """A single plain-language issue flagged by the Stage 8 review pass."""
 
     section_id: str
-    flagged_text: str   # verbatim snippet from the ICF section text
-    issue_type: str     # REPETITION | PASSIVE_VOICE | SENTENCE_TOO_LONG |
-                        # TERMINOLOGY_INCONSISTENCY | UNCLEAR | TONE |
-                        # PLAIN_LANGUAGE_VIOLATION
-    suggestion: str     # brief guidance explaining the issue
-    severity: str       # HIGH | MEDIUM | LOW
+    flagged_text: str  # verbatim snippet from the ICF section text
+    issue_type: str  # REPETITION | PASSIVE_VOICE | SENTENCE_TOO_LONG |
+    # TERMINOLOGY_INCONSISTENCY | UNCLEAR | TONE |
+    # PLAIN_LANGUAGE_VIOLATION
+    suggestion: str  # brief guidance explaining the issue
+    severity: str  # HIGH | MEDIUM | LOW
     suggested_fix: str = ""  # ready-to-copy replacement text; empty if not applicable
 
     def to_dict(self) -> dict:
@@ -184,6 +184,68 @@ class ReviewResult:
 
 
 @dataclass
+class GlobalFixRule:
+    """A document-wide fix rule extracted from Stage 8 cross-section notes.
+
+    rule_type values:
+      define_abbreviation  -- expand an acronym on its first appearance
+      standardize_term     -- replace an inconsistent term across sections
+      fix_inconsistency    -- correct a factual/structural inconsistency
+      note_only            -- acknowledged but not auto-applied (e.g. repetition)
+    """
+
+    rule_type: str
+    description: str
+    affected_section_ids: list[str]
+
+    def to_dict(self) -> dict:
+        return {
+            "rule_type": self.rule_type,
+            "description": self.description,
+            "affected_section_ids": self.affected_section_ids,
+        }
+
+
+@dataclass
+class RemediationRecord:
+    """Audit record for one section patched during Stage 9 remediation."""
+
+    section_id: str
+    high_flag_count: int
+    global_rules_applied: list[str]  # descriptions of GlobalFixRules applied
+    original_text: str
+    patched_text: str  # equals original_text when success=False
+    success: bool
+    notes: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "section_id": self.section_id,
+            "high_flag_count": self.high_flag_count,
+            "global_rules_applied": self.global_rules_applied,
+            "success": self.success,
+            "notes": self.notes,
+        }
+
+
+@dataclass
+class RemediationResult:
+    """The output of the Stage 9 HIGH flag remediation pass."""
+
+    records: list[RemediationRecord]
+    global_rules: list[GlobalFixRule]
+    # Descriptions of note_only rules not auto-applied (e.g. structural repetition).
+    unaddressed_notes: str
+
+    def to_dict(self) -> dict:
+        return {
+            "records": [r.to_dict() for r in self.records],
+            "global_rules": [g.to_dict() for g in self.global_rules],
+            "unaddressed_notes": self.unaddressed_notes,
+        }
+
+
+@dataclass
 class PipelineResult:
     """The complete result of the ICF pipeline."""
 
@@ -194,6 +256,7 @@ class PipelineResult:
     report_path: str | None
     summary: dict
     review_result: ReviewResult | None = None
+    remediation_result: RemediationResult | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -204,4 +267,5 @@ class PipelineResult:
             "report_path": self.report_path,
             "summary": self.summary,
             "review": self.review_result.to_dict() if self.review_result else None,
+            "remediation": self.remediation_result.to_dict() if self.remediation_result else None,
         }
