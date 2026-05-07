@@ -3,11 +3,16 @@ ICF evaluation engine using DeepEval.
 
 Evaluates AI-generated ICF extraction results against:
   1. Ground truth (approved human-written ICF) — correctness score
-  2. Rubric dimensions (10 criteria from UHN evaluation outline) — GEval scores
-  3. Deterministic metrics (Flesch-Kincaid reading level) — code-computed
+  2. Rubric dimensions (9 criteria from UHN evaluation outline) — GEval scores
 
 Supports comparing multiple backends side-by-side by loading their
 extraction_report_*.json files from the output directory.
+
+Scores are aggregated into three category averages for publication reporting:
+  task_performance  — Fidelity, Honesty, Over-inclusion
+  effectiveness     — Misleading Language, RBVA, Tone
+  accessibility     — Language Quality, Inclusive Language
+  gt_alignment      — Ground Truth Correctness (separate, where GT available)
 
 Usage::
 
@@ -30,23 +35,20 @@ from dataclasses import dataclass, field
 from icf.eval_ground_truth import parse_ground_truth_docx, print_ground_truth_summary
 from icf.eval_rubrics import (
     ALL_RUBRICS,
-    CONTEXT_RUBRICS,
     DEFAULT_POLICY,
-    DETERMINISTIC_RUBRICS,
     DOCUMENT_LEVEL_RUBRICS,
     GROUND_TRUTH_REQUIRED,
     GROUND_TRUTH_RUBRICS,
-    READING_LEVEL,
+    GROUNDING_RUBRIC_NAMES,
+    EvalPolicy,
     RubricDefinition,
     ScoringMode,
-    EvalPolicy,
     has_placeholders,
     is_rubric_applicable,
     route_section,
 )
 from icf.registry import load_template_registry
 from icf.types import TemplateVariable
-
 
 # ------------------------------------------------------------------
 # Data types
@@ -61,11 +63,11 @@ class SectionScore:
     score: float  # 0.0 - 1.0
     grade: str  # Excellent / Good / Borderline / Poor / Fail / N/A
     reason: str = ""
-    routing_mode: str = ""          # SKIP / HARD_PENALTY / SOFT / FULL
-    evidence_relevance: str = ""    # STRONG / PARTIAL / WEAK / IRRELEVANT
-    support_level: str = ""         # WITHIN / EXCEEDS / NO_EVIDENCE
-    confidence: str = ""            # HIGH / MEDIUM / LOW
-    extraction_status: str = ""     # FOUND / PARTIAL / NOT_FOUND / ERROR
+    routing_mode: str = ""  # SKIP / HARD_PENALTY / SOFT / FULL
+    evidence_relevance: str = ""  # STRONG / PARTIAL / WEAK / IRRELEVANT
+    support_level: str = ""  # WITHIN / EXCEEDS / NO_EVIDENCE
+    confidence: str = ""  # HIGH / MEDIUM / LOW
+    extraction_status: str = ""  # FOUND / PARTIAL / NOT_FOUND / ERROR
 
 
 @dataclass
@@ -109,38 +111,6 @@ class BackendEvalResult:
             if s.rubric_name == rubric_name and s.score >= 0
         ]
         return sum(vals) / len(vals) if vals else None
-
-
-# ------------------------------------------------------------------
-# Flesch-Kincaid (deterministic)
-# ------------------------------------------------------------------
-
-
-def _flesch_kincaid_grade(text: str) -> float | None:
-    """Compute Flesch-Kincaid grade level. Returns None if text is too short."""
-    if not text or len(text.split()) < 10:
-        return None
-    try:
-        import textstat
-
-        return textstat.flesch_kincaid_grade(text)
-    except ImportError:
-        return None
-
-
-def _fk_to_score_and_grade(grade: float | None) -> tuple[float, str]:
-    """Map Flesch-Kincaid grade level to the rubric score and label."""
-    if grade is None:
-        return -1.0, "N/A"
-    if grade <= 6.0:
-        return 1.0, "Excellent"
-    if grade <= 8.0:
-        return 0.8, "Good"
-    if grade <= 10.0:
-        return 0.5, "Borderline"
-    if grade <= 12.0:
-        return 0.25, "Poor"
-    return 0.0, "Fail"
 
 
 # ------------------------------------------------------------------
@@ -267,15 +237,34 @@ def _build_evidence_context(
     return ["\n".join(lines)]
 
 
+def _get_parent_gt(ground_truth: dict[str, str], sid: str) -> str | None:
+    """Return GT text for the closest ancestor section when a sub-section has no GT.
+
+    Enables sub-sections like '12.1' to inherit GT from '12' when the ground-truth
+    DOCX uses top-level headings only. Tries progressively shorter dotted prefixes.
+    """
+    parts = sid.split(".")
+    while len(parts) > 1:
+        parts = parts[:-1]
+        parent = ".".join(parts)
+        if parent in ground_truth:
+            return ground_truth[parent]
+    return None
+
+
 def _score_to_grade(score: float) -> str:
-    """Convert a 0-1 DeepEval score to Excellent/Good/Borderline/Poor/Fail."""
+    """Convert a 0-1 score to Excellent/Good/Borderline/Poor/Fail.
+
+    Boundaries match GRADE_SCALE in eval_combined.py so judge calibration
+    and code-side grade labels are consistent.
+    """
     if score >= 0.9:
         return "Excellent"
     if score >= 0.7:
         return "Good"
     if score >= 0.5:
         return "Borderline"
-    if score >= 0.25:
+    if score >= 0.3:
         return "Poor"
     return "Fail"
 
@@ -351,16 +340,14 @@ class ICFEvalRunner:
         # Build GEval metrics (once, reuse across backends)
         judge = _resolve_judge_model(self.judge_model)
         llm_rubrics = [r for r in self.rubrics if not r.deterministic]
-        geval_metrics = {
-            r.name: _build_geval_metric(r, judge) for r in llm_rubrics
-        }
+        geval_metrics = {r.name: _build_geval_metric(r, judge) for r in llm_rubrics}
 
         # Evaluate each backend
         results: dict[str, BackendEvalResult] = {}
         for backend_name, report_path in self.report_paths.items():
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"[EVAL] Evaluating backend: {backend_name}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             result = self._evaluate_backend(
                 backend_name=backend_name,
                 report_path=report_path,
@@ -380,7 +367,6 @@ class ICFEvalRunner:
         Same output format as run() but ~90% cheaper. Scores all rubrics
         in a single LLM call instead of one call per rubric.
         """
-        from icf.eval_combined import evaluate_section_combined
 
         # Load registry
         variables = load_template_registry(self.registry_path)
@@ -423,25 +409,29 @@ class ICFEvalRunner:
         else:
             client = openai.OpenAI()
 
-        # Build full GT ICF string once — document-level reference for judge
-        full_gt_icf = ""
+        # Build compact study context summary once — used in every section's judge call
+        # instead of dumping the full GT ICF, which would repeat ~4k tokens per section.
+        from icf.eval_combined import build_study_context_summary
+
+        study_context = ""
         if ground_truth:
-            gt_parts = []
-            for v in variables:
-                gt_text = ground_truth.get(v.section_id, "")
-                if gt_text.strip():
-                    label = f"[{v.section_id}] {v.heading}"
-                    if v.sub_section:
-                        label += f" > {v.sub_section}"
-                    gt_parts.append(f"=== {label} ===\n{gt_text.strip()}")
-            full_gt_icf = "\n\n".join(gt_parts)
+            print("[EVAL-COMBINED] Building study context summary (1 LLM call) ...")
+            study_context = build_study_context_summary(
+                ground_truth=ground_truth,
+                variables=variables,
+                client=client,
+                model_name=self.judge_model,
+            )
+            if study_context:
+                word_count = len(study_context.split())
+                print(f"[EVAL-COMBINED] Study context: {word_count} words")
 
         # Evaluate each backend
         results: dict[str, BackendEvalResult] = {}
         for backend_name, report_path in self.report_paths.items():
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"[EVAL-COMBINED] Evaluating backend: {backend_name}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             result = self._evaluate_backend_combined(
                 backend_name=backend_name,
                 report_path=report_path,
@@ -449,7 +439,7 @@ class ICFEvalRunner:
                 ground_truth=ground_truth,
                 protocol_text=protocol_text,
                 client=client,
-                full_gt_icf=full_gt_icf,
+                study_context=study_context,
             )
 
             # Document-level pass — 1 LLM call on full concatenated output
@@ -458,7 +448,9 @@ class ICFEvalRunner:
 
                 full_text = self._concatenate_backend_output_from_report(report_path)
                 if full_text and len(full_text.split()) >= 50:
-                    print(f"\n[EVAL-COMBINED] Document-level quality pass ({len(full_text.split())} words)...")
+                    print(
+                        f"\n[EVAL-COMBINED] Document-level quality pass ({len(full_text.split())} words)..."
+                    )
                     for doc_rubric in DOCUMENT_LEVEL_RUBRICS:
                         doc_result = evaluate_document_level(
                             full_text=full_text,
@@ -467,10 +459,12 @@ class ICFEvalRunner:
                             model_name=self.judge_model,
                             verbose=self.verbose,
                         )
-                        result.document_scores.append({
-                            "rubric": doc_rubric.name,
-                            **doc_result,
-                        })
+                        result.document_scores.append(
+                            {
+                                "rubric": doc_rubric.name,
+                                **doc_result,
+                            }
+                        )
                         grade = doc_result.get("grade", "ERROR")
                         score = doc_result.get("score", -1.0)
                         issues = doc_result.get("issues", [])
@@ -491,7 +485,7 @@ class ICFEvalRunner:
         ground_truth: dict[str, str],
         protocol_text: str | None,
         client,
-        full_gt_icf: str = "",
+        study_context: str = "",
     ) -> BackendEvalResult:
         """Evaluate a single backend using combined mode (1 call per section)."""
         from icf.eval_combined import evaluate_section_combined
@@ -503,9 +497,12 @@ class ICFEvalRunner:
         extractions = report.get("extractions", [])
         backend_result = BackendEvalResult(backend_name=backend_name)
         total = sum(
-            1 for e in extractions
+            1
+            for e in extractions
             if e.get("status") not in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT")
-            and (e.get("filled_template") or e.get("answer", "")).strip()
+            and e["section_id"] not in self.policy.skip_sections
+            and len((e.get("filled_template") or e.get("answer") or "").split())
+            >= self.policy.min_section_words
         )
         count = 0
 
@@ -519,12 +516,34 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
                 continue
 
-            actual_output = ext.get("filled_template") or ext.get("answer") or ""
-            # For STANDARD_TEXT, use required_text if filled_template is empty
+            # For NOT_FOUND sections the filled_template is intentionally empty —
+            # the extraction correctly abstained. The `answer` field in these cases
+            # holds an internal note/rationale, NOT patient-facing ICF content.
+            # Falling back to `answer` would trick the routing logic into thinking
+            # the AI hallucinated content (NOT_FOUND + concrete text = HARD_PENALTY),
+            # when in reality the section was correctly omitted from the document.
+            if status == "NOT_FOUND":
+                actual_output = ext.get("filled_template") or ""
+            else:
+                actual_output = ext.get("filled_template") or ext.get("answer") or ""
             if not actual_output.strip():
+                continue
+
+            # Skip admin metadata sections (study title, PI name, site, etc.)
+            if sid in self.policy.skip_sections:
+                if self.verbose:
+                    print(f"  [{sid}] SKIPPED (admin section in policy.skip_sections)")
+                continue
+
+            # Skip sections that are too short to evaluate meaningfully
+            if len(actual_output.split()) < self.policy.min_section_words:
+                if self.verbose:
+                    print(
+                        f"  [{sid}] SKIPPED ({len(actual_output.split())} words < min {self.policy.min_section_words})"
+                    )
                 continue
 
             # -- Grounding bundle from extraction report --
@@ -535,7 +554,9 @@ class ICFEvalRunner:
 
             count += 1
             display = var.get_display_name()
-            print(f"\n[EVAL-COMBINED] [{count}/{total}] [{sid}] {display} (status: {status} | conf: {confidence})")
+            print(
+                f"\n[EVAL-COMBINED] [{count}/{total}] [{sid}] {display} (status: {status} | conf: {confidence})"
+            )
 
             section_result = SectionEvalResult(
                 section_id=sid,
@@ -544,41 +565,16 @@ class ICFEvalRunner:
                 status=status,
             )
 
-            # -- Deterministic: Reading Level --
-            if READING_LEVEL in self.rubrics:
-                applicable, skip_reason = is_rubric_applicable(READING_LEVEL, sid, actual_output)
-                if applicable:
-                    fk_grade = _flesch_kincaid_grade(actual_output)
-                    score, grade = _fk_to_score_and_grade(fk_grade)
-                    fk_reason = (
-                        f"Flesch-Kincaid grade: {fk_grade:.1f}"
-                        if fk_grade is not None
-                        else "Text too short for FK calculation"
-                    )
-                    section_result.scores.append(
-                        SectionScore(
-                            rubric_name="Reading Level (Flesch-Kincaid)",
-                            score=score,
-                            grade=grade,
-                            reason=fk_reason,
-                            routing_mode=ScoringMode.FULL,
-                            confidence=confidence,
-                            extraction_status=status,
-                        )
-                    )
-                    if self.verbose:
-                        print(f"  Reading Level: {grade} ({fk_reason})")
-                elif self.verbose:
-                    print(f"  Reading Level (FK): SKIPPED - {skip_reason}")
-
-            # -- Combined LLM call for all other rubrics --
-            gt_text = ground_truth.get(sid)
+            # -- Combined LLM call for all rubrics --
+            # Use exact GT text when available; fall back to parent-section GT for sub-sections
+            # (e.g. section "12.1" inherits from "12" when the GT DOCX uses top-level headings).
+            gt_text = ground_truth.get(sid) or _get_parent_gt(ground_truth, sid)
 
             # Filter rubrics: check applicability, GT requirements, deterministic, routing
-            active_rubrics = []       # rubrics that go to the judge
-            active_routing = []       # routing mode per active rubric
-            skipped_rubrics = []      # (name, reason) skipped before judge
-            hard_penalty_rubrics = [] # (name, reason) hard-penalized in code
+            active_rubrics = []  # rubrics that go to the judge
+            active_routing = []  # routing mode per active rubric
+            skipped_rubrics = []  # (name, reason) skipped before judge
+            hard_penalty_rubrics = []  # (name, reason) hard-penalized in code
 
             for r in self.rubrics:
                 if r.deterministic:
@@ -590,8 +586,16 @@ class ICFEvalRunner:
                         continue
                     # is_in_protocol=False + placeholders only → skip GT Correctness
                     if not var.is_in_protocol and not var.partially_in_protocol:
-                        if has_placeholders(actual_output) and self.policy.skip_gt_if_placeholders_only:
-                            skipped_rubrics.append((r.name, "Non-protocol section with placeholders — correct abstention"))
+                        if (
+                            has_placeholders(actual_output)
+                            and self.policy.skip_gt_if_placeholders_only
+                        ):
+                            skipped_rubrics.append(
+                                (
+                                    r.name,
+                                    "Non-protocol section with placeholders — correct abstention",
+                                )
+                            )
                             continue
 
                 # Section-scope + min word check
@@ -618,7 +622,17 @@ class ICFEvalRunner:
                     skipped_rubrics.append((r.name, route_reason))
                     continue
                 elif mode == ScoringMode.HARD_PENALTY:
-                    hard_penalty_rubrics.append((r, route_reason))
+                    if r.name in GROUNDING_RUBRIC_NAMES:
+                        # Grounding rubrics get the hard penalty — they measure factual
+                        # accuracy relative to the protocol, which cannot be assessed
+                        # when grounding is unconfirmed.
+                        hard_penalty_rubrics.append((r, route_reason))
+                    else:
+                        # Content quality rubrics (tone, language, inclusion) are evaluated
+                        # on the text itself regardless of grounding uncertainty. Route as
+                        # SOFT so the judge is cautioned but still scores.
+                        active_rubrics.append(r)
+                        active_routing.append(ScoringMode.SOFT)
                     continue
 
                 active_rubrics.append(r)
@@ -666,7 +680,9 @@ class ICFEvalRunner:
                     evidence=evidence,
                     confidence=confidence,
                     notes=notes,
-                    routing_modes={r.name: m for r, m in zip(active_rubrics, active_routing)},
+                    routing_modes={
+                        r.name: m for r, m in zip(active_rubrics, active_routing, strict=True)
+                    },
                     rubrics=active_rubrics,
                     client=client,
                     model_name=self.judge_model,
@@ -674,14 +690,20 @@ class ICFEvalRunner:
                     instructions=getattr(var, "instructions", "") or "",
                     required_text=getattr(var, "required_text", "") or "",
                     suggested_text=getattr(var, "suggested_text", "") or "",
-                    full_gt_icf=full_gt_icf,
+                    study_context=study_context,
                 )
 
-                for r, mode in zip(active_rubrics, active_routing):
-                    result_data = scores.get(r.name, {
-                        "score": -1.0, "grade": "ERROR", "reason": "Not returned by judge",
-                        "evidence_relevance": "", "support_level": "",
-                    })
+                for r, mode in zip(active_rubrics, active_routing, strict=True):
+                    result_data = scores.get(
+                        r.name,
+                        {
+                            "score": -1.0,
+                            "grade": "ERROR",
+                            "reason": "Not returned by judge",
+                            "evidence_relevance": "",
+                            "support_level": "",
+                        },
+                    )
                     final_score = result_data["score"]
                     final_grade = result_data["grade"]
                     final_reason = result_data["reason"]
@@ -721,8 +743,8 @@ class ICFEvalRunner:
                         print(
                             f"  {r.name}: {result_data['grade']} "
                             f"({result_data['score']:.2f}) "
-                            f"[relevance={result_data.get('evidence_relevance','')} "
-                            f"support={result_data.get('support_level','')}] "
+                            f"[relevance={result_data.get('evidence_relevance', '')} "
+                            f"support={result_data.get('support_level', '')}] "
                             f"- {result_data['reason'][:100]}"
                         )
 
@@ -733,9 +755,7 @@ class ICFEvalRunner:
 
         # Coverage analysis
         if ground_truth:
-            backend_result.coverage = self._compute_coverage(
-                extractions, ground_truth, var_map
-            )
+            backend_result.coverage = self._compute_coverage(extractions, ground_truth, var_map)
 
         return backend_result
 
@@ -755,8 +775,6 @@ class ICFEvalRunner:
             report = json.load(f)
 
         extractions = report.get("extractions", [])
-        ext_map = {e["section_id"]: e for e in extractions}
-
         backend_result = BackendEvalResult(backend_name=backend_name)
 
         for ext in extractions:
@@ -769,12 +787,31 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            # Skip truly unextracted sections only
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
                 continue
 
-            actual_output = ext.get("filled_template") or ext.get("answer") or ""
+            # For NOT_FOUND sections the filled_template is intentionally empty —
+            # the extraction correctly abstained. Never fall back to `answer` here;
+            # the `answer` field is an internal note, not evaluatable ICF content.
+            if status == "NOT_FOUND":
+                actual_output = ext.get("filled_template") or ""
+            else:
+                actual_output = ext.get("filled_template") or ext.get("answer") or ""
             if not actual_output.strip():
+                continue
+
+            # Skip admin metadata sections
+            if sid in self.policy.skip_sections:
+                if self.verbose:
+                    print(f"  [{sid}] SKIPPED (admin section in policy.skip_sections)")
+                continue
+
+            # Skip sections that are too short to evaluate meaningfully
+            if len(actual_output.split()) < self.policy.min_section_words:
+                if self.verbose:
+                    print(
+                        f"  [{sid}] SKIPPED ({len(actual_output.split())} words < min {self.policy.min_section_words})"
+                    )
                 continue
 
             # -- Grounding bundle --
@@ -792,33 +829,6 @@ class ICFEvalRunner:
                 status=status,
             )
 
-            # -- Deterministic: Reading Level --
-            if READING_LEVEL in self.rubrics:
-                applicable, skip_reason = is_rubric_applicable(READING_LEVEL, sid, actual_output)
-                if applicable:
-                    fk_grade = _flesch_kincaid_grade(actual_output)
-                    score, grade = _fk_to_score_and_grade(fk_grade)
-                    fk_reason = (
-                        f"Flesch-Kincaid grade: {fk_grade:.1f}"
-                        if fk_grade is not None
-                        else "Text too short for FK calculation"
-                    )
-                    section_result.scores.append(
-                        SectionScore(
-                            rubric_name="Reading Level (Flesch-Kincaid)",
-                            score=score,
-                            grade=grade,
-                            reason=fk_reason,
-                            routing_mode=ScoringMode.FULL,
-                            confidence=confidence,
-                            extraction_status=status,
-                        )
-                    )
-                    if self.verbose:
-                        print(f"  Reading Level: {grade} ({fk_reason})")
-                elif self.verbose:
-                    print(f"  Reading Level (FK): SKIPPED - {skip_reason}")
-
             # -- GEval rubrics (LLM judge) --
             for rubric in self.rubrics:
                 if rubric.deterministic:
@@ -831,11 +841,17 @@ class ICFEvalRunner:
                 # Section-scope + min word check
                 applicable, skip_reason = is_rubric_applicable(rubric, sid, actual_output)
                 if not applicable:
-                    section_result.scores.append(SectionScore(
-                        rubric_name=rubric.name, score=-1.0, grade="N/A",
-                        reason=skip_reason, routing_mode=ScoringMode.SKIP,
-                        confidence=confidence, extraction_status=status,
-                    ))
+                    section_result.scores.append(
+                        SectionScore(
+                            rubric_name=rubric.name,
+                            score=-1.0,
+                            grade="N/A",
+                            reason=skip_reason,
+                            routing_mode=ScoringMode.SKIP,
+                            confidence=confidence,
+                            extraction_status=status,
+                        )
+                    )
                     if self.verbose:
                         print(f"  {rubric.name}: N/A - {skip_reason}")
                     continue
@@ -843,25 +859,44 @@ class ICFEvalRunner:
                 # Honesty skip is handled by route_section when section
                 # is not in protocol — no separate gate needed
 
-                # GT Correctness abstention-aware skip
-                gt_text = ground_truth.get(sid) if rubric.name in GROUND_TRUTH_RUBRICS else None
+                # GT Correctness abstention-aware skip.
+                # Sub-sections inherit parent GT when direct match is absent.
+                gt_text: str | None = None
+                if rubric.name in GROUND_TRUTH_RUBRICS:
+                    gt_text = ground_truth.get(sid) or _get_parent_gt(ground_truth, sid)
                 if rubric.name in GROUND_TRUTH_REQUIRED:
                     if not gt_text:
-                        section_result.scores.append(SectionScore(
-                            rubric_name=rubric.name, score=-1.0, grade="N/A",
-                            reason="No ground truth available for this section",
-                            routing_mode=ScoringMode.SKIP,
-                            confidence=confidence, extraction_status=status,
-                        ))
+                        section_result.scores.append(
+                            SectionScore(
+                                rubric_name=rubric.name,
+                                score=-1.0,
+                                grade="N/A",
+                                reason="No ground truth available for this section",
+                                routing_mode=ScoringMode.SKIP,
+                                confidence=confidence,
+                                extraction_status=status,
+                            )
+                        )
                         continue
                     if not var.is_in_protocol and not var.partially_in_protocol:
-                        if has_placeholders(actual_output) and self.policy.skip_gt_if_placeholders_only:
-                            na_reason = "Non-protocol section with placeholders — correct abstention"
-                            section_result.scores.append(SectionScore(
-                                rubric_name=rubric.name, score=-1.0, grade="N/A",
-                                reason=na_reason, routing_mode=ScoringMode.SKIP,
-                                confidence=confidence, extraction_status=status,
-                            ))
+                        if (
+                            has_placeholders(actual_output)
+                            and self.policy.skip_gt_if_placeholders_only
+                        ):
+                            na_reason = (
+                                "Non-protocol section with placeholders — correct abstention"
+                            )
+                            section_result.scores.append(
+                                SectionScore(
+                                    rubric_name=rubric.name,
+                                    score=-1.0,
+                                    grade="N/A",
+                                    reason=na_reason,
+                                    routing_mode=ScoringMode.SKIP,
+                                    confidence=confidence,
+                                    extraction_status=status,
+                                )
+                            )
                             if self.verbose:
                                 print(f"  {rubric.name}: N/A - {na_reason}")
                             continue
@@ -880,37 +915,51 @@ class ICFEvalRunner:
                 )
 
                 if mode == ScoringMode.SKIP:
-                    section_result.scores.append(SectionScore(
-                        rubric_name=rubric.name, score=-1.0, grade="N/A",
-                        reason=route_reason, routing_mode=ScoringMode.SKIP,
-                        confidence=confidence, extraction_status=status,
-                    ))
-                    if self.verbose:
-                        print(f"  {rubric.name}: N/A - {route_reason}")
-                    continue
-
-                if mode == ScoringMode.HARD_PENALTY:
                     section_result.scores.append(
                         SectionScore(
                             rubric_name=rubric.name,
-                            score=self.policy.hard_penalty_score,
-                            grade="Poor",
+                            score=-1.0,
+                            grade="N/A",
                             reason=route_reason,
-                            routing_mode=ScoringMode.HARD_PENALTY,
+                            routing_mode=ScoringMode.SKIP,
                             confidence=confidence,
                             extraction_status=status,
                         )
                     )
                     if self.verbose:
-                        print(f"  {rubric.name}: HARD_PENALTY ({route_reason})")
+                        print(f"  {rubric.name}: N/A - {route_reason}")
                     continue
+
+                if mode == ScoringMode.HARD_PENALTY:
+                    if rubric.name in GROUNDING_RUBRIC_NAMES:
+                        section_result.scores.append(
+                            SectionScore(
+                                rubric_name=rubric.name,
+                                score=self.policy.hard_penalty_score,
+                                grade="Poor",
+                                reason=route_reason,
+                                routing_mode=ScoringMode.HARD_PENALTY,
+                                confidence=confidence,
+                                extraction_status=status,
+                            )
+                        )
+                        if self.verbose:
+                            print(f"  {rubric.name}: HARD_PENALTY ({route_reason})")
+                        continue
+                    else:
+                        # Content quality rubrics still evaluated on text itself
+                        mode = ScoringMode.SOFT
 
                 # Build evidence context for the judge instead of protocol dump
                 evidence_context = _build_evidence_context(evidence, confidence, mode)
 
                 # Use GT as expected_output if available
                 use_metric = metric
-                if rubric.name in GROUND_TRUTH_RUBRICS and not gt_text and rubric.name not in GROUND_TRUTH_REQUIRED:
+                if (
+                    rubric.name in GROUND_TRUTH_RUBRICS
+                    and not gt_text
+                    and rubric.name not in GROUND_TRUTH_REQUIRED
+                ):
                     use_metric = _build_geval_metric_without_expected(rubric, judge)
 
                 test_case = _build_test_case(
@@ -956,9 +1005,7 @@ class ICFEvalRunner:
 
         # -- Coverage analysis: AI output vs ground truth --
         if ground_truth:
-            backend_result.coverage = self._compute_coverage(
-                extractions, ground_truth, var_map
-            )
+            backend_result.coverage = self._compute_coverage(extractions, ground_truth, var_map)
 
         return backend_result
 
@@ -966,9 +1013,7 @@ class ICFEvalRunner:
     # Scoped rubric flagging
     # ------------------------------------------------------------------
 
-    def _flag_missing_scoped_sections(
-        self, extractions: list[dict], backend_name: str
-    ) -> None:
+    def _flag_missing_scoped_sections(self, extractions: list[dict], backend_name: str) -> None:
         """Print warnings when a scoped rubric's target sections are missing."""
         # Build set of section IDs that were actually generated
         generated = set()
@@ -1021,7 +1066,13 @@ class ICFEvalRunner:
         ground_truth: dict[str, str],
         var_map: dict[str, TemplateVariable],
     ) -> CoverageAnalysis:
-        """Compare which sections appear in AI output vs ground truth."""
+        """Compare which sections appear in AI output vs ground truth.
+
+        Sub-section awareness: if the AI generated sub-sections (e.g. 12.1, 12.2)
+        but the GT only has the parent (12), those sub-sections are classified as
+        "sub_of_matched" rather than "ai_only" to avoid inflating the over-inclusion
+        count for legitimate granularity differences.
+        """
         # AI sections that have actual content (FOUND or PARTIAL)
         ai_generated: dict[str, str] = {}
         for ext in extractions:
@@ -1035,33 +1086,49 @@ class ICFEvalRunner:
 
         coverage = CoverageAnalysis()
 
-        # AI generated but not in ground truth — potential over-inclusion
+        # Direct matches
+        coverage.matched = sorted(ai_ids & gt_ids)
+
+        # AI generated but not a direct GT match
         for sid in sorted(ai_ids - gt_ids):
             var = var_map.get(sid)
             display = var.get_display_name() if var else sid
-            coverage.ai_only.append({
-                "section_id": sid,
-                "heading": display,
-                "status": ai_generated[sid],
-                "flag": "AI generated content for a section not in the approved ICF",
-            })
+            # Check if this is a sub-section whose parent is in GT
+            parent = _get_parent_gt(ground_truth, sid)
+            if parent is not None:
+                # Sub-section expansion of a matched parent — not a true over-inclusion
+                coverage.ai_only.append(
+                    {
+                        "section_id": sid,
+                        "heading": display,
+                        "status": ai_generated[sid],
+                        "flag": f"AI sub-section of matched GT section (parent matched: {sid.rsplit('.', 1)[0]})",
+                    }
+                )
+            else:
+                coverage.ai_only.append(
+                    {
+                        "section_id": sid,
+                        "heading": display,
+                        "status": ai_generated[sid],
+                        "flag": "AI generated content for a section not in the approved ICF",
+                    }
+                )
 
         # In ground truth but AI didn't generate — potential gap
         for sid in sorted(gt_ids - ai_ids):
             var = var_map.get(sid)
             display = var.get_display_name() if var else sid
-            # Check if it was skipped vs errored vs not attempted
             ext_match = next((e for e in extractions if e["section_id"] == sid), None)
             ai_status = ext_match.get("status", "NOT_IN_REPORT") if ext_match else "NOT_IN_REPORT"
-            coverage.gt_only.append({
-                "section_id": sid,
-                "heading": display,
-                "ai_status": ai_status,
-                "flag": "Approved ICF has this section but AI did not generate it",
-            })
-
-        # Both have it
-        coverage.matched = sorted(ai_ids & gt_ids)
+            coverage.gt_only.append(
+                {
+                    "section_id": sid,
+                    "heading": display,
+                    "ai_status": ai_status,
+                    "flag": "Approved ICF has this section but AI did not generate it",
+                }
+            )
 
         return coverage
 
@@ -1072,51 +1139,62 @@ class ICFEvalRunner:
     def print_comparison(self, results: dict[str, BackendEvalResult]) -> None:
         """Print a side-by-side comparison table of all backends."""
         backends = list(results.keys())
-        rubric_names = [r.name for r in self.rubrics]
+        col_w = 18
+        sep = "=" * (38 + col_w * len(backends))
 
-        sep = "=" * (30 + 18 * len(backends))
         print(f"\n{sep}")
-        print("ICF EVALUATION COMPARISON")
+        print("ICF EVALUATION RESULTS")
         print(sep)
 
         # Header row
-        header = f"{'Rubric':<30s}"
+        header = f"{'Rubric':<38s}"
         for b in backends:
-            header += f"  {b:>14s}"
+            header += f"  {b:>{col_w - 2}s}"
         print(header)
         print("-" * len(header))
 
-        # Score rows
-        for rname in rubric_names:
-            row = f"{rname:<30s}"
+        # Print rubrics grouped by category
+        category_labels = {
+            "ground_truth": "GT ALIGNMENT",
+            "task_performance": "TASK PERFORMANCE",
+            "effectiveness": "EFFECTIVENESS",
+            "accessibility": "ACCESSIBILITY",
+        }
+        categories = ["ground_truth", "task_performance", "effectiveness", "accessibility"]
+
+        for cat in categories:
+            cat_rubrics = [r for r in self.rubrics if r.category == cat]
+            if not cat_rubrics:
+                continue
+            print(f"\n  [{category_labels[cat]}]")
+            for r in cat_rubrics:
+                row = f"  {r.name:<36s}"
+                for b in backends:
+                    avg = results[b].avg_score(r.name)
+                    if avg is not None:
+                        grade = _score_to_grade(avg)
+                        row += f"  {avg:>5.2f} {grade:>9s}"
+                    else:
+                        row += f"  {'N/A':>{col_w - 2}s}"
+                print(row)
+
+            # Category average
+            row = f"  {'  → Category avg':<36s}"
             for b in backends:
-                avg = results[b].avg_score(rname)
-                if avg is not None:
+                cat_scores = [
+                    results[b].avg_score(r.name)
+                    for r in cat_rubrics
+                    if results[b].avg_score(r.name) is not None
+                ]
+                if cat_scores:
+                    avg = sum(cat_scores) / len(cat_scores)
                     grade = _score_to_grade(avg)
-                    row += f"  {avg:>5.2f} {grade:>7s}"
+                    row += f"  {avg:>5.2f} {grade:>9s}"
                 else:
-                    row += f"  {'N/A':>14s}"
+                    row += f"  {'N/A':>{col_w - 2}s}"
             print(row)
 
-        print(sep)
-
-        # Overall average
-        row = f"{'OVERALL AVERAGE':<30s}"
-        for b in backends:
-            all_scores = [
-                s.score
-                for sec in results[b].sections
-                for s in sec.scores
-                if s.score >= 0
-            ]
-            if all_scores:
-                avg = sum(all_scores) / len(all_scores)
-                grade = _score_to_grade(avg)
-                row += f"  {avg:>5.2f} {grade:>7s}"
-            else:
-                row += f"  {'N/A':>14s}"
-        print(row)
-        print(sep)
+        print(f"\n{sep}")
 
         # Coverage analysis per backend
         for b in backends:
@@ -1124,27 +1202,44 @@ class ICFEvalRunner:
             if not cov:
                 continue
 
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"COVERAGE ANALYSIS: {b}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"  Sections matched (AI + ground truth): {len(cov.matched)}")
 
-            if cov.ai_only:
-                print(f"\n  AI generated but NOT in approved ICF ({len(cov.ai_only)}):")
-                print(f"  (Potential over-inclusion — REB experts did not include these)")
-                for item in cov.ai_only:
-                    print(f"    [{item['section_id']}] {item['heading']} (status: {item['status']})")
+            true_ai_only = [i for i in cov.ai_only if not i["flag"].startswith("AI sub-section")]
+            sub_expanded = [i for i in cov.ai_only if i["flag"].startswith("AI sub-section")]
+
+            if sub_expanded:
+                print(
+                    f"\n  AI sub-section expansions of matched GT sections ({len(sub_expanded)}):"
+                )
+                print("  (AI used finer-grained sections than GT — not an over-inclusion flag)")
+                for item in sub_expanded:
+                    print(
+                        f"    [{item['section_id']}] {item['heading']} (status: {item['status']})"
+                    )
+
+            if true_ai_only:
+                print(f"\n  AI generated but NOT in approved ICF ({len(true_ai_only)}):")
+                print("  (Potential over-inclusion — REB experts did not include these)")
+                for item in true_ai_only:
+                    print(
+                        f"    [{item['section_id']}] {item['heading']} (status: {item['status']})"
+                    )
 
             if cov.gt_only:
                 print(f"\n  In approved ICF but MISSING from AI output ({len(cov.gt_only)}):")
-                print(f"  (Potential gaps — REB experts included these)")
+                print("  (Potential gaps — REB experts included these)")
                 for item in cov.gt_only:
-                    print(f"    [{item['section_id']}] {item['heading']} (AI status: {item['ai_status']})")
+                    print(
+                        f"    [{item['section_id']}] {item['heading']} (AI status: {item['ai_status']})"
+                    )
 
             if not cov.ai_only and not cov.gt_only:
                 print("  Perfect coverage — AI output matches ground truth sections exactly.")
 
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
     def save_report(
         self,
@@ -1158,26 +1253,30 @@ class ICFEvalRunner:
             for sec in backend_result.sections:
                 scores = []
                 for s in sec.scores:
-                    scores.append({
-                        "rubric": s.rubric_name,
-                        "score": s.score,
-                        "grade": s.grade,
-                        "reason": s.reason,
-                        "routing_mode": s.routing_mode,
-                        "evidence_relevance": s.evidence_relevance,
-                        "support_level": s.support_level,
-                        "confidence": s.confidence,
-                        "extraction_status": s.extraction_status,
-                    })
-                sections.append({
-                    "section_id": sec.section_id,
-                    "heading": sec.heading,
-                    "sub_section": sec.sub_section,
-                    "status": sec.status,
-                    "scores": scores,
-                })
+                    scores.append(
+                        {
+                            "rubric": s.rubric_name,
+                            "score": s.score,
+                            "grade": s.grade,
+                            "reason": s.reason,
+                            "routing_mode": s.routing_mode,
+                            "evidence_relevance": s.evidence_relevance,
+                            "support_level": s.support_level,
+                            "confidence": s.confidence,
+                            "extraction_status": s.extraction_status,
+                        }
+                    )
+                sections.append(
+                    {
+                        "section_id": sec.section_id,
+                        "heading": sec.heading,
+                        "sub_section": sec.sub_section,
+                        "status": sec.status,
+                        "scores": scores,
+                    }
+                )
 
-            # Compute averages
+            # Per-rubric averages
             averages = {}
             for rubric in self.rubrics:
                 avg = backend_result.avg_score(rubric.name)
@@ -1187,15 +1286,53 @@ class ICFEvalRunner:
                         "grade": _score_to_grade(avg),
                     }
 
+            # Category averages for publication reporting.
+            # Three primary categories + GT alignment reported separately.
+            category_averages: dict[str, dict] = {}
+            for cat in ("task_performance", "effectiveness", "accessibility"):
+                cat_names = [r.name for r in self.rubrics if r.category == cat]
+                cat_scores = [
+                    backend_result.avg_score(n)
+                    for n in cat_names
+                    if backend_result.avg_score(n) is not None
+                ]
+                if cat_scores:
+                    cat_avg = sum(cat_scores) / len(cat_scores)
+                    category_averages[cat] = {
+                        "score": round(cat_avg, 3),
+                        "grade": _score_to_grade(cat_avg),
+                        "rubrics": cat_names,
+                    }
+            # GT alignment — separate because it only applies where GT is available
+            gt_names = [r.name for r in self.rubrics if r.category == "ground_truth"]
+            gt_scores = [
+                backend_result.avg_score(n)
+                for n in gt_names
+                if backend_result.avg_score(n) is not None
+            ]
+            if gt_scores:
+                category_averages["gt_alignment"] = {
+                    "score": round(sum(gt_scores) / len(gt_scores), 3),
+                    "grade": _score_to_grade(sum(gt_scores) / len(gt_scores)),
+                    "rubrics": gt_names,
+                }
+
             # Coverage analysis
             coverage_data = None
             cov = backend_result.coverage
             if cov:
+                # Split ai_only into genuine over-inclusions vs sub-section expansions
+                true_ai_only = [
+                    i for i in cov.ai_only if not i["flag"].startswith("AI sub-section")
+                ]
+                sub_expanded = [i for i in cov.ai_only if i["flag"].startswith("AI sub-section")]
                 coverage_data = {
                     "matched_sections": cov.matched,
                     "matched_count": len(cov.matched),
-                    "ai_only": cov.ai_only,
-                    "ai_only_count": len(cov.ai_only),
+                    "ai_only": true_ai_only,
+                    "ai_only_count": len(true_ai_only),
+                    "ai_subsections_of_matched": sub_expanded,
+                    "ai_subsections_count": len(sub_expanded),
                     "gt_only": cov.gt_only,
                     "gt_only_count": len(cov.gt_only),
                 }
@@ -1203,8 +1340,11 @@ class ICFEvalRunner:
             report[backend_name] = {
                 "sections": sections,
                 "averages": averages,
+                "category_averages": category_averages,
                 "coverage": coverage_data,
-                "document_level": backend_result.document_scores if backend_result.document_scores else None,
+                "document_level": backend_result.document_scores
+                if backend_result.document_scores
+                else None,
             }
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

@@ -1,7 +1,7 @@
 """
 Evaluation rubrics for AI-generated ICF quality assessment.
 
-Encodes 10 per-section evaluation dimensions + 1 document-level rubric
+Encodes 9 per-section evaluation dimensions + 1 document-level rubric
 from the UHN AI-Generated ICF Evaluation Outline (v3, March 2026) as
 structured rubric definitions consumed by DeepEval GEval metrics or
 the combined single-call evaluator.
@@ -11,8 +11,15 @@ Each rubric has:
   - description: What this dimension measures
   - criteria:    The full Excellent/Good/Borderline/Poor/Fail rubric text
   - params:      Which LLMTestCaseParams the GEval metric needs
-  - category:    "task_performance" | "effectiveness" | "document_level"
+  - category:    "task_performance" | "effectiveness" | "accessibility" |
+                 "ground_truth" | "document_level"
   - deterministic: True if this should be computed with code, not an LLM judge
+
+Category groupings for aggregated reporting:
+  task_performance  : Fidelity to Protocol, Honesty, Over-inclusion
+  effectiveness     : Misleading Language, Risks/Benefits/Voluntariness, Tone
+  accessibility     : Language Quality, Inclusive Language
+  ground_truth      : Ground Truth Correctness (separate — only where GT available)
 """
 
 from __future__ import annotations
@@ -199,7 +206,7 @@ INCLUSIVE_LANGUAGE = RubricDefinition(
         "insensitive language."
     ),
     params=["actual_output"],
-    category="task_performance",
+    category="accessibility",
 )
 
 READING_LEVEL = RubricDefinition(
@@ -263,7 +270,7 @@ LANGUAGE_QUALITY = RubricDefinition(
         "throughout. Does not adhere to plain language guidelines."
     ),
     params=["actual_output", "expected_output"],
-    category="task_performance",
+    category="accessibility",
     min_text_words=20,
 )
 
@@ -344,7 +351,8 @@ RISKS_BENEFITS_VOLUNTARINESS = RubricDefinition(
     ),
     params=["actual_output", "expected_output", "context"],
     category="effectiveness",
-    applicable_sections=["7", "16", "18", "18.1", "18.2", "19", "20"],
+    # 17 = early termination (participant rights re: investigator-initiated withdrawal)
+    applicable_sections=["7", "16", "17", "18", "18.1", "18.2", "19", "20"],
 )
 
 TONE = RubricDefinition(
@@ -430,20 +438,26 @@ DOCUMENT_QUALITY = RubricDefinition(
 # ======================================================================
 
 ALL_RUBRICS: list[RubricDefinition] = [
-    # Ground truth
+    # Ground truth alignment (separate category — only scored where GT available)
     GROUND_TRUTH_CORRECTNESS,
-    # Task performance
+    # Task performance: extraction quality
     FIDELITY_TO_PROTOCOL,
     HONESTY,
     OVER_INCLUSION,
-    INCLUSIVE_LANGUAGE,
-    READING_LEVEL,
-    LANGUAGE_QUALITY,
-    # Effectiveness
+    # Effectiveness: patient-facing communication quality
     MISLEADING_LANGUAGE,
     RISKS_BENEFITS_VOLUNTARINESS,
     TONE,
+    # Accessibility: readability and inclusion
+    LANGUAGE_QUALITY,
+    INCLUSIVE_LANGUAGE,
 ]
+
+# READING_LEVEL is kept as a standalone definition for optional use but excluded
+# from ALL_RUBRICS. Flesch-Kincaid systematically penalises ICF documents for
+# using unavoidable medical vocabulary (disease names, drug names, procedures),
+# making it an unfair primary metric. Language Quality (LLM-judged) is the
+# primary readability metric.
 
 # Document-level rubric (not in ALL_RUBRICS — runs separately at end)
 DOCUMENT_LEVEL_RUBRICS: list[RubricDefinition] = [DOCUMENT_QUALITY]
@@ -463,6 +477,18 @@ DETERMINISTIC_RUBRICS = {r.name for r in ALL_RUBRICS if r.deterministic}
 # Rubrics scoped to specific sections
 SCOPED_RUBRICS = {r.name: r.applicable_sections for r in ALL_RUBRICS if r.applicable_sections}
 
+# Grounding rubrics: these measure factual accuracy relative to the protocol.
+# Only grounding rubrics receive HARD_PENALTY (0.15) when routing detects a
+# hallucination risk. Content quality rubrics (tone, language, etc.) are still
+# evaluated on the text itself even when grounding is unconfirmed.
+GROUNDING_RUBRIC_NAMES: frozenset[str] = frozenset(
+    {
+        GROUND_TRUTH_CORRECTNESS.name,
+        FIDELITY_TO_PROTOCOL.name,
+        HONESTY.name,
+    }
+)
+
 
 # ======================================================================
 # Evaluation policy and routing
@@ -471,10 +497,11 @@ SCOPED_RUBRICS = {r.name: r.applicable_sections for r in ALL_RUBRICS if r.applic
 
 class ScoringMode(str, Enum):
     """Routing decision for how to score a section's rubric."""
-    SKIP = "SKIP"               # Don't score — record N/A
+
+    SKIP = "SKIP"  # Don't score — record N/A
     HARD_PENALTY = "HARD_PENALTY"  # Score in code, no judge call
-    SOFT = "SOFT"               # Call judge with caution warning
-    FULL = "FULL"               # Call judge normally
+    SOFT = "SOFT"  # Call judge with caution warning
+    FULL = "FULL"  # Call judge normally
 
 
 @dataclass
@@ -484,10 +511,30 @@ class EvalPolicy:
     Modify fields here to adjust evaluation behaviour without touching
     eval_runner.py or eval_combined.py logic.
     """
-    # Sections where Honesty rubric is applied (safety-critical only)
-    honesty_sections: list[str] = field(default_factory=lambda: [
-        "7", "16", "18", "18.1", "18.2", "19", "20"
-    ])
+
+    # Sections to skip entirely — no rubrics evaluated, not added to results.
+    # Default: ICF header metadata fields (study title, PI name, site, etc.)
+    # which contain only short administrative strings and add no signal.
+    skip_sections: list[str] = field(
+        default_factory=lambda: [
+            "2.1",
+            "2.2",
+            "2.3",
+            "2.4",
+            "2.5",
+            "2.6",
+        ]
+    )
+
+    # Minimum words of section content required to run any evaluation.
+    # Sections below this threshold are skipped (too short to assess meaningfully).
+    min_section_words: int = 20
+
+    # Sections where the Honesty rubric is applied.
+    # None  = apply to all sections where routing permits (default — route_section
+    #         already skips Honesty when a section is not in the protocol at all).
+    # list  = restrict to those section IDs only.
+    honesty_sections: list[str] | None = None
 
     # Minimum evidence relevance level to allow full scoring
     # "STRONG" = only strong relevance gets full score
@@ -561,7 +608,10 @@ def route_section(
     if partially_in_protocol:
         if confidence == "HIGH":
             return ScoringMode.FULL, "Partially in protocol + HIGH confidence — full scoring"
-        return ScoringMode.SOFT, "Partially in protocol — soft scoring, judge cautioned about boundary"
+        return (
+            ScoringMode.SOFT,
+            "Partially in protocol — soft scoring, judge cautioned about boundary",
+        )
 
     # --- Layer 2: Status + Confidence routing ---
 
@@ -574,14 +624,23 @@ def route_section(
     if status == "NOT_FOUND" and confidence in ("HIGH", "MEDIUM"):
         if concrete:
             # AI invented content despite confirmed absence — hard penalty
-            return ScoringMode.HARD_PENALTY, "NOT_FOUND + HIGH/MEDIUM confidence but AI generated concrete content — possible hallucination"
+            return (
+                ScoringMode.HARD_PENALTY,
+                "NOT_FOUND + HIGH/MEDIUM confidence but AI generated concrete content — possible hallucination",
+            )
         else:
             # Correct abstention
-            return ScoringMode.SKIP, "NOT_FOUND + HIGH/MEDIUM confidence — info confirmed absent, correct abstention"
+            return (
+                ScoringMode.SKIP,
+                "NOT_FOUND + HIGH/MEDIUM confidence — info confirmed absent, correct abstention",
+            )
 
     # LOW confidence + no evidence + concrete claims — hallucination risk
     if confidence == "LOW" and not has_evidence and concrete and not placeholders_only:
-        return ScoringMode.HARD_PENALTY, "LOW confidence + no evidence + concrete claims — hallucination risk"
+        return (
+            ScoringMode.HARD_PENALTY,
+            "LOW confidence + no evidence + concrete claims — hallucination risk",
+        )
 
     # MEDIUM confidence → soft mode (warn judge)
     if confidence == "MEDIUM" and policy.medium_confidence_soft:

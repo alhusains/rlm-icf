@@ -9,6 +9,7 @@ The LLM judge receives:
   - The AI-generated ICF section text
   - Evidence quotes the extractor retrieved (targeted, not a protocol dump)
   - Extraction confidence + status
+  - A compact study context summary (built once per eval run, not the full GT ICF)
   - The REB-approved ground truth section (if available)
   - All applicable rubric criteria in one prompt
   - Routing mode (SOFT = caution warning, FULL = normal)
@@ -34,6 +35,94 @@ Score each rubric on this scale:
 
 Use intermediate values (e.g. 0.9, 0.7, 0.4, 0.2, 0.1) when appropriate.
 """
+
+
+# ICF section IDs that carry essential study-level facts.
+# Used to build the study context summary instead of dumping the full GT ICF.
+_STUDY_CONTEXT_SECTIONS = {
+    "3",     # Introduction
+    "5",     # Background
+    "6",     # Why is this study being done?
+    "8",     # How many people will take part?
+    "10",    # What is the study intervention?
+    "11",    # What else do I need to know about the intervention?
+    "15",    # How long will participants be in the study?
+    "18",    # Risks (overview)
+}
+
+
+def build_study_context_summary(
+    ground_truth: dict[str, str],
+    variables: list,
+    client,
+    model_name: str,
+) -> str:
+    """Distil the GT ICF into a compact study fact sheet (one LLM call per eval run).
+
+    Sends only the informational sections of the approved ICF (background,
+    purpose, intervention, duration, risks) to the judge and asks it to produce
+    a 200-300 word study fact sheet.  This replaces injecting the full GT ICF
+    into every per-section judge call, cutting input tokens by ~50% while
+    preserving the semantic study understanding the judge needs to avoid
+    penalising AI content that is correct about the study but absent from the
+    section-level ground truth.
+
+    Parameters
+    ----------
+    ground_truth: dict mapping section_id -> approved GT text
+    variables:    TemplateVariable list from the registry (for heading labels)
+    client:       OpenAI / AzureOpenAI client
+    model_name:   Deployment / model name for the summarisation call
+
+    Returns an empty string if ground_truth is empty or the call fails.
+    """
+    if not ground_truth:
+        return ""
+
+    var_map = {v.section_id: v for v in variables}
+
+    parts = []
+    for sid in sorted(_STUDY_CONTEXT_SECTIONS, key=lambda x: (len(x), x)):
+        gt_text = ground_truth.get(sid, "").strip()
+        if not gt_text:
+            continue
+        var = var_map.get(sid)
+        heading = var.heading if var else sid
+        parts.append(f"[{sid}] {heading}:\n{gt_text}")
+
+    if not parts:
+        return ""
+
+    source = "\n\n".join(parts)
+
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a clinical research expert. Extract only factual "
+                        "study information — no consent language, no formatting."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "From the ICF sections below, write a concise study fact "
+                        "sheet (200-300 words). Cover: study name / drug or "
+                        "intervention, disease or condition, patient population, "
+                        "key procedures, primary risks, study duration, and main "
+                        "objective. Use plain declarative sentences.\n\n"
+                        + source
+                    ),
+                },
+            ],
+        )
+        return response.choices[0].message.content or ""
+    except Exception:
+        return ""
 
 
 def _build_evidence_block(
@@ -75,7 +164,7 @@ def _build_combined_prompt(
     instructions: str = "",
     required_text: str = "",
     suggested_text: str = "",
-    full_gt_icf: str = "",
+    study_context: str = "",
 ) -> list[dict]:
     """Build a single prompt that asks the judge to score all rubrics at once."""
 
@@ -168,13 +257,18 @@ def _build_combined_prompt(
 
     user_parts = []
 
-    # Full GT ICF — document-level reference so judge understands the full consent story
-    if full_gt_icf:
+    # Study context summary — compact fact sheet built once per eval run.
+    # Gives the judge semantic understanding of the study so it does not penalise
+    # AI content that is factually correct about the study but happens to be absent
+    # from the section-level ground truth.
+    if study_context:
         user_parts.append(
-            "=== FULL REB-APPROVED ICF (document-level reference) ===\n"
-            "This is the complete approved ICF for this study. Use it to understand "
-            "the full consent story and context — NOT as a section-by-section answer key.\n\n"
-            + full_gt_icf
+            "=== STUDY CONTEXT (factual summary of this clinical study) ===\n"
+            "Use this to verify whether AI-generated content is factually consistent "
+            "with the study. If the AI states something correct about the study that "
+            "is not in the section-level ground truth, do NOT penalise it — credit "
+            "accurate study knowledge. This is NOT an answer key.\n\n"
+            + study_context
         )
 
     user_parts += [
@@ -277,7 +371,7 @@ def _parse_combined_response(
                     grade = "Good"
                 elif score >= 0.5:
                     grade = "Borderline"
-                elif score >= 0.25:
+                elif score >= 0.3:
                     grade = "Poor"
                 else:
                     grade = "Fail"
@@ -317,8 +411,9 @@ def evaluate_section_combined(
     instructions: str = "",
     required_text: str = "",
     suggested_text: str = "",
+    study_context: str = "",
+    # Legacy parameters kept for backwards compatibility — no longer used
     full_gt_icf: str = "",
-    # Legacy parameter kept for backwards compatibility — no longer used
     protocol_context: str | None = None,
 ) -> dict[str, dict]:
     """Evaluate a single section across all rubrics in one LLM call.
@@ -326,6 +421,8 @@ def evaluate_section_combined(
     Uses evidence quotes from the extraction report instead of a protocol dump.
     Passes UHN registry context (instructions, required_text, suggested_text)
     so the judge understands the task and can distinguish required from optional content.
+    Receives a compact study context summary (not the full GT ICF) for semantic
+    study-level grounding.
 
     Returns
     -------
@@ -348,7 +445,7 @@ def evaluate_section_combined(
         instructions=instructions,
         required_text=required_text,
         suggested_text=suggested_text,
-        full_gt_icf=full_gt_icf,
+        study_context=study_context,
     )
 
     try:

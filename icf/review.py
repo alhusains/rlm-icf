@@ -25,6 +25,13 @@ from icf.review_prompts import build_icf_document_for_review, build_review_messa
 from icf.types import ExtractionResult, ReviewFlag, ReviewResult, TemplateVariable
 from rlm.clients import get_client
 
+# Strip accidental "SECTION " prefix from section IDs returned by the review LLM.
+_SECTION_PREFIX_RE = re.compile(r"^(?:SECTION|Section|section)\s+", re.IGNORECASE)
+
+
+def _normalize_review_section_id(raw: str) -> str:
+    return _SECTION_PREFIX_RE.sub("", raw).strip()
+
 
 class ReviewEngine:
     """Run the Stage 8 plain-language review over the assembled ICF.
@@ -58,14 +65,10 @@ class ReviewEngine:
         Returns a ReviewResult with flags and cross_section_notes.
         On failure returns an empty ReviewResult rather than raising.
         """
-        icf_document, standard_text_ids = build_icf_document_for_review(
-            extractions, variables
-        )
+        icf_document, standard_text_ids = build_icf_document_for_review(extractions, variables)
 
         if not icf_document.strip():
-            return ReviewResult(
-                flags=[], cross_section_notes="No extractable content to review."
-            )
+            return ReviewResult(flags=[], cross_section_notes="No extractable content to review.")
 
         messages = build_review_messages(icf_document, standard_text_ids)
 
@@ -120,7 +123,7 @@ def _parse_review_response(raw: str, standard_text_ids: set[str]) -> ReviewResul
     for f in data.get("flags", []):
         if not isinstance(f, dict):
             continue
-        section_id = str(f.get("section_id", ""))
+        section_id = _normalize_review_section_id(str(f.get("section_id", "")))
         # Safety backstop: drop any flag targeting a protected section.
         if section_id in standard_text_ids:
             continue

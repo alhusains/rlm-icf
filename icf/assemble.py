@@ -17,6 +17,7 @@ from docx.shared import Pt, RGBColor
 
 from icf.types import (
     ExtractionResult,
+    RemediationResult,
     ReviewResult,
     TemplateVariable,
     ValidationResult,
@@ -71,11 +72,7 @@ def generate_draft_docx(
         # Required sections always appear so the human reviewer knows to fill them.
         # ADAPTATION_SKIPPED sections always appear regardless of required status so
         # the study team can review and confirm the irrelevance decision.
-        if (
-            ext is not None
-            and ext.status in ("NOT_FOUND", "SKIPPED")
-            and not var.required
-        ):
+        if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
             continue
 
         # Section heading
@@ -215,6 +212,7 @@ def generate_report_json(
     summary: dict[str, Any],
     output_path: str,
     review_result: ReviewResult | None = None,
+    remediation_result: RemediationResult | None = None,
 ) -> str:
     """Write the full extraction report as JSON."""
     report = {
@@ -222,6 +220,7 @@ def generate_report_json(
         "extractions": [e.to_dict() for e in extractions],
         "validations": [v.to_dict() for v in validations],
         "review": review_result.to_dict() if review_result else None,
+        "remediation": remediation_result.to_dict() if remediation_result else None,
     }
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
