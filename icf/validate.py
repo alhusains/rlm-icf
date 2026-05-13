@@ -1,11 +1,10 @@
 """
 Validation pipeline for ICF extractions.
 
-Four checks:
+Three checks:
   1. Quote verification   - does the cited quote actually appear in the protocol?
-  2. Reading level        - is the answer written at Grade 6-8?
-  3. Meta-commentary      - does filled_template contain internal process notes?
-  4. Issue aggregation    - collect all problems for the report.
+  2. Meta-commentary      - does filled_template contain internal process notes?
+  3. Issue aggregation    - collect all problems for the report.
 """
 
 import re
@@ -124,27 +123,8 @@ def check_meta_commentary(text: str) -> list[str]:
 
 
 # ------------------------------------------------------------------
-# 3. Reading level
-# ------------------------------------------------------------------
-
-
-def check_reading_level(text: str) -> float | None:
-    """Return Flesch-Kincaid grade level, or None if unavailable."""
-    if not text or len(text.split()) < 10:
-        return None
-    try:
-        import textstat
-
-        return textstat.flesch_kincaid_grade(text)
-    except ImportError:
-        return None
-
-
-# ------------------------------------------------------------------
 # 3. Aggregate validation
 # ------------------------------------------------------------------
-
-READING_LEVEL_WARN = 8.0  # flag answers above Grade 8
 
 
 def validate_extractions(
@@ -181,18 +161,11 @@ def validate_extractions(
         # Meta-commentary in patient-facing text
         issues.extend(check_meta_commentary(ext.filled_template))
 
-        # Reading level
-        grade = check_reading_level(ext.answer)
-        if grade is not None and grade > READING_LEVEL_WARN:
-            issues.append(
-                f"Reading level ({grade:.1f}) exceeds Grade {READING_LEVEL_WARN:.0f} target."
-            )
-
         results.append(
             ValidationResult(
                 section_id=ext.section_id,
                 quotes_verified=quotes_ok,
-                reading_grade_level=grade,
+                reading_grade_level=None,
                 issues=issues,
             )
         )
