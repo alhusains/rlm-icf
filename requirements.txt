@@ -1,0 +1,18 @@
+# Production dependencies for the deployed Streamlit container.
+#
+# `-e .` installs the rlm/ and icf/ packages defined in pyproject.toml,
+# pulling in all their core dependencies (openai, anthropic, google-genai,
+# python-dotenv, requests, rich, etc.). We don't strip those — the pipeline
+# imports them defensively even when only Azure OpenAI is used at runtime.
+#
+# On top of that, the web wrapper needs:
+#   - streamlit: the UI framework
+#   - python-docx: required by icf/clean_icf.py and icf/assemble.py for
+#     generating the final ICF DOCX outputs (it's listed under the optional
+#     [eval] extra in pyproject.toml, but the production pipeline needs it
+#     too — pinning explicitly here).
+
+-e .
+streamlit>=1.40,<2.0
+python-docx>=1.1.0
+pypdf>=4.0.0
