@@ -1,0 +1,54 @@
+# --- VCS / IDE -------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+
+# --- Python local artifacts ------------------------------------------------
+.venv
+venv
+.venv_vllm
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+
+# --- Secrets — NEVER ship these into an image -----------------------------
+.env
+.env.*
+!.env.example
+
+# --- Local-only output / cache directories --------------------------------
+output/
+.rag_cache/
+
+# --- Test / dev / docs (not needed at runtime) ----------------------------
+tests/
+build/
+dist/
+docs/
+examples/
+media/
+EvalRubric/
+visualizer/
+data/
+!data/standard_ICF_template_breakdown.json
+!data/UHN_logo.png
+.pre-commit-config.yaml
+Makefile
+MANIFEST.IN
+test.py
+test_sentinel.py
+run_eval.py
+run_eval_review.py
+
+# --- Misc ------------------------------------------------------------------
+*.log
+.DS_Store
+uv.lock
