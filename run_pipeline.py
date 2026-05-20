@@ -328,6 +328,18 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--skip-harmonize",
+        action="store_true",
+        help=(
+            "Skip the Stage 5.5 section-group harmonization pass. "
+            "Harmonization redistributes and de-duplicates content across related "
+            "sub-sections (e.g., all 'WHAT ARE THE STUDY PROCEDURES?' sub-sections) "
+            "that were extracted independently. A group is silently skipped when "
+            "fewer than 2 of its sections have content, so using --sections with a "
+            "full group (e.g. all 12.x) still triggers harmonization correctly."
+        ),
+    )
+    parser.add_argument(
         "--validation-phase",
         action="store_true",
         help=(
@@ -451,6 +463,7 @@ def main() -> int:
         skip_review=args.skip_review,
         skip_remediation=args.skip_remediation,
         skip_adaptation=args.skip_adaptation,
+        skip_harmonize=args.skip_harmonize,
         validation_phase=args.validation_phase,
     )
 
