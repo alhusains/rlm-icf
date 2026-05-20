@@ -257,6 +257,7 @@ class PipelineResult:
     summary: dict
     review_result: ReviewResult | None = None
     remediation_result: RemediationResult | None = None
+    validation_icf_path: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -264,6 +265,7 @@ class PipelineResult:
             "validations": [v.to_dict() for v in self.validations],
             "output_docx_path": self.output_docx_path,
             "clean_icf_path": self.clean_icf_path,
+            "validation_icf_path": self.validation_icf_path,
             "report_path": self.report_path,
             "summary": self.summary,
             "review": self.review_result.to_dict() if self.review_result else None,
