@@ -715,20 +715,37 @@ def _add_validation_placeholder(
     doc: Document,
     ext: ExtractionResult | None,
     var: TemplateVariable | None,
+    optional: bool = False,
 ) -> None:
-    """[TO BE FILLED MANUALLY] in yellow + optional suggested text in grey italic."""
+    """Yellow [TO BE FILLED MANUALLY] label + optional suggested text in grey italic.
+
+    When *optional* is True (section is not required), the label reads
+    ``[TO BE FILLED MANUALLY IF RELEVANT]`` to signal that inclusion is
+    at the reviewer's discretion.
+
+    When *var* has no ``suggested_text`` but does have ``required_text``, the
+    required_text (which contains the template wording with placeholder markers)
+    is shown as the suggested hint so the reviewer has a concrete starting point.
+    """
+    label = "[TO BE FILLED MANUALLY IF RELEVANT]" if optional else "[TO BE FILLED MANUALLY]"
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(2)
-    r = p.add_run("[TO BE FILLED MANUALLY]")
+    r = p.add_run(label)
     r.font.name = _FONT
     r.font.size = Pt(_BODY_PT)
     r.bold = True
     r.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
     suggested = ""
-    if var and var.suggested_text:
-        suggested = _plain_suggested_text(var).strip()
+    if var:
+        if var.suggested_text:
+            suggested = _plain_suggested_text(var).strip()
+        elif var.required_text:
+            # Fall back to required_text (template wording with {{...}} markers)
+            # so the reviewer has a concrete starting point even when no
+            # dedicated suggested_text was authored for this section.
+            suggested = var.required_text.strip()
     if suggested:
         p2 = doc.add_paragraph()
         p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -768,8 +785,19 @@ def _write_validation_body(
 
         content = _get_section_content(ext)
 
+        # Keep optional sections that have a meaningful extraction status so the
+        # EC reviewer can see them and decide whether to fill them manually.
+        # Only silently drop optional sections that were never attempted (ext is
+        # None) or have an uninformative status (e.g. STANDARD_TEXT already
+        # handled above, ADAPTATION_SKIPPED already skipped above).
         if not content and not var.required:
-            continue
+            no_useful_status = ext is None or ext.status not in (
+                "NOT_FOUND",
+                "SKIPPED",
+                "ERROR",
+            )
+            if no_useful_status:
+                continue
 
         # ---- Heading -----------------------------------------------------------
         if var.heading != last_heading:
@@ -802,7 +830,7 @@ def _write_validation_body(
             if ext is not None and ext.status == "PARTIAL" and ext.notes:
                 _add_partial_notes(doc, ext.notes)
         else:
-            _add_validation_placeholder(doc, ext, var)
+            _add_validation_placeholder(doc, ext, var, optional=not var.required)
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from icf.assemble import generate_draft_docx, generate_report_json
 from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
 from icf.debug_logger import ICFDebugLogger
 from icf.extract import ExtractionEngine
+from icf.harmonize import SectionGroupHarmonizer
 from icf.ingest import load_protocol
 from icf.registry import load_template_registry
 from icf.types import (
@@ -84,6 +85,7 @@ class ICFPipeline:
         skip_review: bool = False,
         skip_remediation: bool = False,
         skip_adaptation: bool = False,
+        skip_harmonize: bool = False,
         validation_phase: bool = False,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
@@ -119,6 +121,7 @@ class ICFPipeline:
         self.skip_review = skip_review
         self.skip_remediation = skip_remediation
         self.skip_adaptation = skip_adaptation
+        self.skip_harmonize = skip_harmonize
         self.validation_phase = validation_phase
 
     # ------------------------------------------------------------------
@@ -247,6 +250,26 @@ class ICFPipeline:
             # Ensure final_variables is defined even on early exit
             if "final_variables" not in dir():
                 final_variables = all_variables
+
+        # -- Stage 5.5: Section-group harmonization (optional) ---------------
+        if not self.skip_harmonize:
+            harmonizer = SectionGroupHarmonizer(
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                verbose=self.verbose,
+            )
+            print("\n[HARMONIZE] Running section-group harmonization pass ...")
+            extractions, harmonize_audit = harmonizer.run_harmonization(
+                extractions, final_variables
+            )
+            total_changed = sum(len(v) for v in harmonize_audit.values())
+            print(
+                f"[HARMONIZE] Done — {total_changed} sub-section(s) revised "
+                f"across {len(harmonize_audit)} section(s)."
+            )
+        else:
+            print("\n[HARMONIZE] Skipped (--skip-harmonize).")
 
         # -- Stage 6: Validate -----------------------------------------------
         print(f"\n[VALIDATE] Validating {len(extractions)} extractions ...")
