@@ -21,7 +21,7 @@ import time
 
 from icf.adapt import ADAPTATION_TRIGGER_IDS, build_adapted_registry
 from icf.assemble import generate_draft_docx, generate_report_json
-from icf.clean_icf import generate_clean_icf_docx
+from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
 from icf.debug_logger import ICFDebugLogger
 from icf.extract import ExtractionEngine
 from icf.ingest import load_protocol
@@ -46,7 +46,7 @@ class ICFPipeline:
 
         pipeline = ICFPipeline(
             protocol_path="data/Prot_000.pdf",
-            template_path="data/standard_ICF_template_breakdown.json",
+            template_path="data/UHN_standard_ICF_template_breakdown_new.json",
         )
         result = pipeline.run()
         ICFPipeline.print_summary(result)
@@ -83,6 +83,8 @@ class ICFPipeline:
         azure_search_semantic_config: str | None = None,
         skip_review: bool = False,
         skip_remediation: bool = False,
+        skip_adaptation: bool = False,
+        validation_phase: bool = False,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
             raise ValueError(
@@ -116,6 +118,8 @@ class ICFPipeline:
         self.azure_search_semantic_config = azure_search_semantic_config
         self.skip_review = skip_review
         self.skip_remediation = skip_remediation
+        self.skip_adaptation = skip_adaptation
+        self.validation_phase = validation_phase
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -195,7 +199,10 @@ class ICFPipeline:
                 self._print_extraction_status(idx, total, result)
 
             # -- Adaptation pass
-            if trigger_vars and early_results:
+            if self.skip_adaptation:
+                print("\n[ADAPT] Skipped (--skip-adaptation).")
+                adapted_non_trigger = non_trigger_vars
+            elif trigger_vars and early_results:
                 n_optional = sum(1 for v in non_trigger_vars if not v.required)
                 print(
                     f"\n[ADAPT] Running adaptation pass "
@@ -259,6 +266,7 @@ class ICFPipeline:
         docx_path = os.path.join(self.output_dir, f"draft_icf_{stem}.docx")
         json_path = os.path.join(self.output_dir, f"extraction_report_{stem}.json")
         clean_docx_path = os.path.join(self.output_dir, f"final_icf_{stem}.docx")
+        validation_docx_path = os.path.join(self.output_dir, f"validation_icf_{stem}.docx")
 
         # -- Stage 8: Review (optional plain-language annotation pass) --------
         review_result: ReviewResult | None = None
@@ -346,6 +354,17 @@ class ICFPipeline:
             logo_path=logo_path,
         )
 
+        validation_path_out: str | None = None
+        if self.validation_phase:
+            print(f"[ASSEMBLE] Writing validation ICF -> {validation_docx_path}")
+            generate_validation_docx(
+                extractions=extractions,
+                variables=final_variables,
+                output_path=validation_docx_path,
+                logo_path=logo_path,
+            )
+            validation_path_out = validation_docx_path
+
         result = PipelineResult(
             extractions=extractions,
             validations=validations,
@@ -355,6 +374,7 @@ class ICFPipeline:
             summary=summary,
             review_result=review_result,
             remediation_result=remediation_result,
+            validation_icf_path=validation_path_out,
         )
 
         self.print_summary(result)
@@ -563,9 +583,11 @@ class ICFPipeline:
         print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
         if result.output_docx_path:
-            print(f"  Draft ICF:   {result.output_docx_path}")
+            print(f"  Draft ICF:        {result.output_docx_path}")
         if result.clean_icf_path:
-            print(f"  Clean ICF:   {result.clean_icf_path}")
+            print(f"  Clean ICF:        {result.clean_icf_path}")
+        if result.validation_icf_path:
+            print(f"  Validation ICF:   {result.validation_icf_path}")
         if result.report_path:
-            print(f"  Report:      {result.report_path}")
+            print(f"  Report:           {result.report_path}")
         print(sep)

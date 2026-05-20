@@ -17,7 +17,7 @@ Usage:
 
 Optional flags (same as run_pipeline.py):
     --output-dir output
-    --model gpt-5.1
+    --model gpt-5.4
     --backend openai
     --verbose
 """
@@ -134,8 +134,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--registry",
-        default="data/standard_ICF_template_breakdown.json",
-        help="Path to the ICF template registry JSON (default: data/standard_ICF_template_breakdown.json).",
+        default="data/UHN_standard_ICF_template_breakdown_new.json",
+        help="Path to the ICF template registry JSON (default: data/UHN_standard_ICF_template_breakdown_new.json).",
     )
     parser.add_argument(
         "--output-dir",
@@ -144,8 +144,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.1",
-        help="LLM model name (default: gpt-5.1).",
+        default="gpt-5.4",
+        help="LLM model name (default: gpt-5.4).",
     )
     parser.add_argument(
         "--backend",

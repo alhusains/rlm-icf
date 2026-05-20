@@ -92,6 +92,21 @@ _META_PATTERNS: list[tuple[str, re.Pattern]] = [
             re.IGNORECASE,
         ),
     ),
+    (
+        "protocol-as-source commentary",
+        re.compile(
+            # Catches sentences where the LLM references the protocol as the
+            # subject of a negative verb — e.g. "The protocol does not state
+            # the visit length" or "The protocol does not clearly describe
+            # hospitalisation". Patient-facing text must never mention the
+            # protocol as an information source.
+            r"\bthe\s+(?:study\s+)?protocol\s+"
+            r"(?:does\s+not|doesn'?t|did\s+not|didn'?t|does\s+not\s+clearly|doesn'?t\s+clearly)\s+"
+            r"(?:state|describe|specify|mention|include|provide|contain|detail|indicate|"
+            r"address|cover|discuss|explain|list|note|outline|report|document|define)",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 

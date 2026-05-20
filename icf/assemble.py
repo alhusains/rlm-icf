@@ -13,6 +13,7 @@ from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from icf.types import (
@@ -111,7 +112,7 @@ def generate_draft_docx(
         if ext.status in ("FOUND", "PARTIAL", "STANDARD_TEXT"):
             text = ext.filled_template or ext.answer
             if text:
-                doc.add_paragraph(text)
+                _add_content(doc, text)
             if ext.status == "PARTIAL" and ext.notes:
                 p = doc.add_paragraph()
                 r = p.add_run(f"[PARTIAL] {ext.notes}")
@@ -230,6 +231,111 @@ def generate_report_json(
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------
+# Markdown table helpers
+# ------------------------------------------------------------------
+
+_TABLE_ROW_RE = re.compile(r"^\s*\|")
+_TABLE_SEP_RE = re.compile(r"^\s*\|[\s\-|:]+\|\s*$")
+
+
+def _split_content(text: str) -> list[tuple[str, str]]:
+    """Split text into ('text', ...) and ('table', ...) segments.
+
+    Consecutive lines beginning with '|' are treated as a Markdown table block.
+    All other lines form plain-text segments.
+    """
+    segments: list[tuple[str, str]] = []
+    current_kind: str | None = None
+    current_lines: list[str] = []
+
+    for line in text.split("\n"):
+        kind = "table" if _TABLE_ROW_RE.match(line) else "text"
+        if kind != current_kind:
+            if current_lines:
+                segments.append((current_kind, "\n".join(current_lines)))  # type: ignore[arg-type]
+            current_kind = kind
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines and current_kind is not None:
+        segments.append((current_kind, "\n".join(current_lines)))
+
+    return segments
+
+
+def _parse_markdown_table(table_text: str) -> list[list[str]]:
+    """Return a list of rows (each a list of cell strings) from a Markdown table.
+
+    Separator lines (|---|---| etc.) are skipped.  The first data row is the header.
+    """
+    rows: list[list[str]] = []
+    for line in table_text.strip().split("\n"):
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        if _TABLE_SEP_RE.match(line):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        rows.append(cells)
+    return rows
+
+
+def _add_docx_table(doc: Document, rows: list[list[str]], colour: RGBColor | None = None) -> None:
+    """Insert a bordered Word table from parsed Markdown rows.
+
+    The first row is rendered as a bold header.
+    """
+    if not rows:
+        return
+    n_cols = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=n_cols)
+    table.style = "Table Grid"
+
+    for ri, row_data in enumerate(rows):
+        is_header = ri == 0
+        for ci in range(n_cols):
+            cell_text = row_data[ci] if ci < len(row_data) else ""
+            cell = table.cell(ri, ci)
+            cell.text = ""
+            para = cell.paragraphs[0]
+            run = para.add_run(cell_text)
+            run.font.name = "Arial"
+            run.font.size = Pt(10)
+            run.bold = is_header
+            if colour is not None:
+                run.font.color.rgb = colour
+            # Shade header row light grey
+            if is_header:
+                tc_pr = cell._tc.get_or_add_tcPr()
+                shd = tc_pr.find(qn("w:shd"))
+                if shd is None:
+                    from docx.oxml import OxmlElement
+
+                    shd = OxmlElement("w:shd")
+                    tc_pr.append(shd)
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), "D9D9D9")
+
+    # Spacing after table
+    doc.add_paragraph()
+
+
+def _add_content(doc: Document, text: str) -> None:
+    """Render text that may contain embedded Markdown tables into the document."""
+    for kind, segment in _split_content(text):
+        if kind == "table":
+            rows = _parse_markdown_table(segment)
+            if rows:
+                _add_docx_table(doc, rows)
+                continue
+        # Plain text fallback
+        if segment.strip():
+            doc.add_paragraph(segment.strip())
 
 
 def _add_status_line(doc: Document, text: str, colour: RGBColor) -> None:

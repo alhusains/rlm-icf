@@ -20,7 +20,7 @@ import os
 import re
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
@@ -84,6 +84,42 @@ def generate_clean_icf_docx(
     _write_intro_page(doc)
     _write_cover_page(doc, variables, ext_map)
     _write_body_sections(doc, variables, ext_map)
+    _write_signature_pages(doc, _get_study_title(ext_map))
+
+    doc.save(output_path)
+    return output_path
+
+
+def generate_validation_docx(
+    extractions: list[ExtractionResult],
+    variables: list[TemplateVariable],
+    output_path: str,
+    logo_path: str | None = None,
+) -> str:
+    """Generate a validation-phase ICF for ethics coordinator (EC) review.
+
+    Shares the complete visual style of the final ICF (Arial 11 pt, UHN header/
+    footer, all-caps underlined headings, subsection grouping, signature pages)
+    with these differences from the final ICF:
+
+    - No confidence-based colour coding — all text is black.
+    - A small italic grey "Status: X | Confidence: Y" annotation is written
+      directly below each section / sub-section heading.
+    - Sections that could not be extracted show ``[TO BE FILLED MANUALLY]``
+      highlighted in yellow, followed by suggested text in grey italic.
+    - No evidence quotes, no review flags, no review appendix.
+    """
+    doc = Document()
+    _configure_page(doc)
+    _set_document_font(doc)
+    _build_header(doc, logo_path)
+    _build_footer(doc)
+
+    ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
+
+    _write_validation_intro_page(doc)
+    _write_cover_page(doc, variables, ext_map)
+    _write_validation_body(doc, variables, ext_map)
     _write_signature_pages(doc, _get_study_title(ext_map))
 
     doc.save(output_path)
@@ -237,6 +273,163 @@ def _add_page_field(para, field_type: str) -> None:
 
 _INTRO_GREY = RGBColor(0x55, 0x55, 0x55)
 _INTRO_BORDER_GREY = RGBColor(0xBB, 0xBB, 0xBB)
+
+
+def _write_validation_intro_page(doc: Document) -> None:
+    """Introductory notes page for the validation-phase ICF (EC-facing)."""
+
+    # ---- Title -----------------------------------------------------------------
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(18)
+    p.paragraph_format.space_after = Pt(4)
+    r = p.add_run("AI-Generated ICF Draft: Reviewer Guide")
+    r.font.name = _FONT
+    r.font.size = Pt(14)
+    r.bold = True
+    r.underline = True
+
+    _add_blank(doc)
+
+    # ---- How to read the annotations ------------------------------------------
+    _intro_section_label(doc, "How to Read the Annotations")
+
+    _intro_body(
+        doc,
+        "Each section in this document includes a short italic line directly "
+        "below the heading. This line summarises the extraction status for that section "
+        "and should be removed before submission.",
+    )
+
+    _add_blank(doc)
+
+    # ---- Status ---------------------------------------------------------------
+    _intro_section_label(doc, "Status")
+
+    _intro_body(
+        doc,
+        "Indicates how completely the AI tool was able to populate the section from "
+        "the protocol:",
+    )
+
+    status_entries: list[tuple[str, str]] = [
+        (
+            "FOUND",
+            "The section was fully populated from the protocol. Review for accuracy "
+            "and plain-language quality.",
+        ),
+        (
+            "PARTIAL",
+            "The section was partially populated. Some fields could not be identified "
+            "in the protocol and are marked [TO BE FILLED MANUALLY]. A note explaining "
+            "what is missing appears at the end of the section in grey italic.",
+        ),
+        (
+            "NOT_FOUND",
+            "No relevant information was located in the protocol. The section requires "
+            "manual completion by the study team.",
+        ),
+        (
+            "SKIPPED",
+            "This section is not expected to be found in a study protocol (e.g. contact "
+            "details, institutional boilerplate). It requires manual entry by the study team.",
+        ),
+    ]
+    for label, desc in status_entries:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(0.8)
+        rl = p.add_run(label + ":  ")
+        rl.font.name = _FONT
+        rl.font.size = Pt(_BODY_PT)
+        rl.bold = True
+        rd = p.add_run(desc)
+        rd.font.name = _FONT
+        rd.font.size = Pt(_BODY_PT)
+
+    _add_blank(doc)
+
+    # ---- Confidence -----------------------------------------------------------
+    _intro_section_label(doc, "Confidence")
+
+    _intro_body(
+        doc,
+        "Reflects the AI tool's own certainty in its extraction result:",
+    )
+
+    _CONF_COLORS: dict[str, RGBColor] = {
+        "HIGH": RGBColor(0x1E, 0x82, 0x1E),    # dark green
+        "MEDIUM": RGBColor(0xC8, 0x82, 0x00),  # dark orange
+        "LOW": RGBColor(0xC8, 0x1E, 0x1E),     # dark red
+    }
+    confidence_entries: list[tuple[str, str]] = [
+        ("HIGH", "Strong, direct evidence found in the protocol."),
+        (
+            "MEDIUM",
+            "Evidence found but required interpretation or was partially ambiguous. "
+            "Closer review is recommended.",
+        ),
+        ("LOW", "Weak or indirect evidence. The section should be carefully verified."),
+    ]
+    for label, desc in confidence_entries:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(0.8)
+        rl = p.add_run(label + ":  ")
+        rl.font.name = _FONT
+        rl.font.size = Pt(_BODY_PT)
+        rl.bold = True
+        rl.font.color.rgb = _CONF_COLORS[label]
+        rd = p.add_run(desc)
+        rd.font.name = _FONT
+        rd.font.size = Pt(_BODY_PT)
+
+    _add_blank(doc)
+
+    # ---- [TO BE FILLED MANUALLY] ----------------------------------------------
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(3)
+    rl = p.add_run("[TO BE FILLED MANUALLY]")
+    rl.font.name = _FONT
+    rl.font.size = Pt(_BODY_PT)
+    rl.bold = True
+    rl.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+    _intro_body(
+        doc,
+        "Highlighted in yellow throughout the document. Each instance marks a specific "
+        "field or sentence that the AI tool could not populate from the protocol. "
+        "The study team must supply this content before the ICF can be submitted. ",
+    )
+
+    _add_blank(doc)
+
+    # ---- Disclaimers ----------------------------------------------------------
+    _intro_section_label(doc, "Important Notes")
+
+    for note in [
+        "This document is an AI-generated draft and has not been reviewed or approved "
+        "by a regulatory body or ethics committee.",
+        "All content must be reviewed, verified, and approved by the study team and "
+        "qualified clinical research professionals before submission.",
+        "Extraction is based solely on the submitted protocol. Information absent from "
+        "the protocol will not appear in this draft.",
+    ]:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(0.8)
+        p.paragraph_format.first_line_indent = Cm(-0.5)
+        r = p.add_run("\u2022 " + note)
+        r.font.name = _FONT
+        r.font.size = Pt(_SMALL_PT)
+        r.italic = True
+        r.font.color.rgb = _INTRO_GREY
+
+    doc.add_page_break()
 
 
 def _write_intro_page(doc: Document) -> None:
@@ -484,6 +677,135 @@ def _write_body_sections(
 
 
 # ---------------------------------------------------------------------------
+# Validation-phase body (mirror of _write_body_sections, no colour coding)
+# ---------------------------------------------------------------------------
+
+_ANNOTATION_GREY = RGBColor(0x88, 0x88, 0x88)
+_ANNOTATION_PT = _SMALL_PT
+
+
+def _add_partial_notes(doc: Document, notes: str) -> None:
+    """Grey italic PARTIAL explanation rendered after section content."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(3)
+    r = p.add_run(f"[PARTIAL] {notes}")
+    r.font.name = _FONT
+    r.font.size = Pt(_ANNOTATION_PT)
+    r.italic = True
+    r.font.color.rgb = _ANNOTATION_GREY
+
+
+def _add_validation_annotation(doc: Document, ext: ExtractionResult) -> None:
+    """Render a small italic grey status/confidence line below a heading."""
+    parts = [f"Status: {ext.status}"]
+    if ext.confidence and ext.confidence not in ("N/A", ""):
+        parts.append(f"Confidence: {ext.confidence}")
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run("  |  ".join(parts))
+    r.font.name = _FONT
+    r.font.size = Pt(_ANNOTATION_PT)
+    r.italic = True
+    r.font.color.rgb = _ANNOTATION_GREY
+
+
+def _add_validation_placeholder(
+    doc: Document,
+    ext: ExtractionResult | None,
+    var: TemplateVariable | None,
+) -> None:
+    """[TO BE FILLED MANUALLY] in yellow + optional suggested text in grey italic."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run("[TO BE FILLED MANUALLY]")
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+    r.bold = True
+    r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+    suggested = ""
+    if var and var.suggested_text:
+        suggested = _plain_suggested_text(var).strip()
+    if suggested:
+        p2 = doc.add_paragraph()
+        p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p2.paragraph_format.space_before = Pt(2)
+        p2.paragraph_format.space_after = Pt(3)
+        p2.paragraph_format.left_indent = Cm(0.5)
+        r2 = p2.add_run("Suggested text: " + suggested)
+        r2.font.name = _FONT
+        r2.font.size = Pt(_ANNOTATION_PT)
+        r2.italic = True
+        r2.font.color.rgb = _ANNOTATION_GREY
+
+
+def _write_validation_body(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+) -> None:
+    """Write body sections for the validation-phase ICF.
+
+    Same grouping / heading logic as ``_write_body_sections`` but:
+    - No confidence-based colour — everything is black.
+    - Status + confidence annotation rendered in small italic grey below each heading.
+    - ``[TO BE FILLED MANUALLY]`` with yellow highlight for unfilled sections.
+    - No evidence quotes, no review flags.
+    """
+    last_heading: str | None = None
+    last_sub_section: str | None = None
+
+    body_vars = [v for v in variables if not v.section_id.startswith("2.")]
+
+    for var in body_vars:
+        ext = ext_map.get(var.section_id)
+
+        if ext and ext.status == "ADAPTATION_SKIPPED":
+            continue
+
+        content = _get_section_content(ext)
+
+        if not content and not var.required:
+            continue
+
+        # ---- Heading -----------------------------------------------------------
+        if var.heading != last_heading:
+            if last_heading is not None:
+                _add_blank(doc)
+            _add_heading(doc, var.heading, color=None)
+            last_heading = var.heading
+            last_sub_section = None
+
+        # ---- Sub-section -------------------------------------------------------
+        if var.sub_section and var.sub_section != last_sub_section:
+            _add_subsection_heading(doc, var.sub_section, color=None)
+            last_sub_section = var.sub_section
+        elif not var.sub_section:
+            last_sub_section = None
+
+        # ---- Annotation (status / confidence) ----------------------------------
+        if ext is not None and ext.status in (
+            "FOUND",
+            "PARTIAL",
+            "NOT_FOUND",
+            "ERROR",
+            "SKIPPED",
+        ):
+            _add_validation_annotation(doc, ext)
+
+        # ---- Content -----------------------------------------------------------
+        if content:
+            _add_content_block(doc, content, color=None, highlight_markers=True)
+            if ext is not None and ext.status == "PARTIAL" and ext.notes:
+                _add_partial_notes(doc, ext.notes)
+        else:
+            _add_validation_placeholder(doc, ext, var)
+
+
+# ---------------------------------------------------------------------------
 # Signature pages (standard UHN — only TITLE line changes)
 # ---------------------------------------------------------------------------
 
@@ -686,41 +1008,159 @@ def _add_subsection_heading(
         r.font.color.rgb = color
 
 
+_TABLE_ROW_RE = re.compile(r"^\s*\|")
+_TABLE_SEP_RE = re.compile(r"^\s*\|[\s\-|:]+\|\s*$")
+
+
+def _split_content(text: str) -> list[tuple[str, str]]:
+    """Split text into ('text', ...) and ('table', ...) segments."""
+    segments: list[tuple[str, str]] = []
+    current_kind: str | None = None
+    current_lines: list[str] = []
+
+    for line in text.split("\n"):
+        kind = "table" if _TABLE_ROW_RE.match(line) else "text"
+        if kind != current_kind:
+            if current_lines:
+                segments.append((current_kind, "\n".join(current_lines)))  # type: ignore[arg-type]
+            current_kind = kind
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines and current_kind is not None:
+        segments.append((current_kind, "\n".join(current_lines)))
+
+    return segments
+
+
+def _parse_markdown_table(table_text: str) -> list[list[str]]:
+    """Parse a Markdown table into rows of cell strings (first row = header)."""
+    rows: list[list[str]] = []
+    for line in table_text.strip().split("\n"):
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        if _TABLE_SEP_RE.match(line):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        rows.append(cells)
+    return rows
+
+
+def _add_table_block(
+    doc: Document, rows: list[list[str]], color: RGBColor | None = None
+) -> None:
+    """Insert a bordered Word table from parsed Markdown rows.
+
+    The first row is rendered as a bold header with light-grey shading.
+    """
+    if not rows:
+        return
+    n_cols = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=n_cols)
+    table.style = "Table Grid"
+
+    for ri, row_data in enumerate(rows):
+        is_header = ri == 0
+        for ci in range(n_cols):
+            cell_text = row_data[ci] if ci < len(row_data) else ""
+            cell = table.cell(ri, ci)
+            cell.text = ""
+            para = cell.paragraphs[0]
+            run = para.add_run(cell_text)
+            run.font.name = _FONT
+            run.font.size = Pt(_BODY_PT - 1)
+            run.bold = is_header
+            if color is not None:
+                run.font.color.rgb = color
+            if is_header:
+                tc_pr = cell._tc.get_or_add_tcPr()
+                shd = tc_pr.find(qn("w:shd"))
+                if shd is None:
+                    shd = OxmlElement("w:shd")
+                    tc_pr.append(shd)
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), "D9D9D9")
+
+    _add_blank(doc)
+
+
+_MANUAL_MARKER = "[TO BE FILLED MANUALLY]"
+
+
+def _add_text_runs(
+    p,
+    text: str,
+    color: RGBColor | None,
+    highlight_markers: bool,
+) -> None:
+    """Append runs to *p*, optionally highlighting ``[TO BE FILLED MANUALLY]`` in yellow."""
+    if not highlight_markers or _MANUAL_MARKER not in text:
+        r = p.add_run(text)
+        r.font.name = _FONT
+        r.font.size = Pt(_BODY_PT)
+        if color is not None:
+            r.font.color.rgb = color
+        return
+    parts = text.split(_MANUAL_MARKER)
+    for i, part in enumerate(parts):
+        if part:
+            r = p.add_run(part)
+            r.font.name = _FONT
+            r.font.size = Pt(_BODY_PT)
+            if color is not None:
+                r.font.color.rgb = color
+        if i < len(parts) - 1:
+            r = p.add_run(_MANUAL_MARKER)
+            r.font.name = _FONT
+            r.font.size = Pt(_BODY_PT)
+            r.bold = True
+            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+
 def _add_content_block(
-    doc: Document, text: str, color: RGBColor | None = None
+    doc: Document,
+    text: str,
+    color: RGBColor | None = None,
+    highlight_markers: bool = False,
 ) -> None:
     """Write a block of extracted content, splitting on newlines.
 
-    Lines starting with bullet markers (•, -, –) are rendered as indented
-    list items; all other lines are rendered as justified body paragraphs.
+    Segments containing Markdown tables (lines starting with |) are rendered
+    as proper Word tables.  Bullet lines become indented list items.  All other
+    lines are rendered as justified body paragraphs.
     *color* colours all runs when provided (confidence colour-coding).
+    *highlight_markers* highlights ``[TO BE FILLED MANUALLY]`` in yellow within
+    the text — used for the validation-phase ICF.
     """
-    lines = [ln for ln in text.split("\n") if ln.strip()]
-    for line in lines:
-        stripped = line.strip()
-        if _BULLET_RE.match(stripped):
-            content = _BULLET_RE.sub("", stripped).strip()
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(2)
-            p.paragraph_format.left_indent = Cm(1.0)
-            p.paragraph_format.first_line_indent = Cm(-0.5)
-            r = p.add_run("\u2022 " + content)
-            r.font.name = _FONT
-            r.font.size = Pt(_BODY_PT)
-            if color is not None:
-                r.font.color.rgb = color
-        else:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(3)
-            r = p.add_run(stripped)
-            r.font.name = _FONT
-            r.font.size = Pt(_BODY_PT)
-            if color is not None:
-                r.font.color.rgb = color
+    for kind, segment in _split_content(text):
+        if kind == "table":
+            rows = _parse_markdown_table(segment)
+            if rows:
+                _add_table_block(doc, rows, color=color)
+                continue
+        # Plain text — render line by line
+        for line in segment.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if _BULLET_RE.match(stripped):
+                content = _BULLET_RE.sub("", stripped).strip()
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(2)
+                p.paragraph_format.left_indent = Cm(1.0)
+                p.paragraph_format.first_line_indent = Cm(-0.5)
+                _add_text_runs(p, "\u2022 " + content, color, highlight_markers)
+            else:
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(3)
+                _add_text_runs(p, stripped, color, highlight_markers)
 
 
 def _add_placeholder(
