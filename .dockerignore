@@ -39,6 +39,7 @@ EvalRubric/
 visualizer/
 data/
 !data/standard_ICF_template_breakdown.json
+!data/minimal_risk_ICF_template_breakdown.json
 !data/UHN_logo.png
 .pre-commit-config.yaml
 Makefile
