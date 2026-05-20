@@ -1,0 +1,716 @@
+{
+  "schema": {
+    "description": "UHN Minimal Risk ICF Automation Pipeline — canonical template registry.",
+    "version": "1.0",
+    "symbol_guide": {
+      "{{placeholder}}": "REQUIRED substitution. Replace the entire {{...}} token with study-specific information extracted from the protocol.",
+      "{{option1/option2}}": "CHOOSE ONE. Pick the applicable option from the slash-separated list inside the braces (e.g., {{will/may}}, {{you/they}}, {{study/clinical trial}}).",
+      "<Condition label>": "CONDITIONAL BLOCK (single angle brackets). Include the text that follows this marker only if the stated condition applies to the study. Typically used for a single-paragraph or single-sentence addition (e.g., <If applicable>, <For studies involving Focus Groups>).",
+      "<<Condition block>>": "CONDITIONAL BLOCK (double angle brackets). Same meaning as <...> but conventionally marks a larger or more distinct scenario block, often with mutually exclusive alternatives (e.g., <<If a fresh tissue sample is required>>, <<If data sent outside Canada>>). Treat identically to <...> for extraction purposes.",
+      "OR (standalone line)": "ALTERNATIVE. Choose exactly one of the blocks immediately above or below this marker — do not include both.",
+      "• or - (list markers)": "BULLET POINT. Both markers are used interchangeably as list items."
+    },
+    "field_guide": {
+      "section_id": "Unique ICF section identifier (e.g., '2.1', '18.2').",
+      "heading": "UPPERCASE section heading as it appears in the ICF template.",
+      "sub_section": "Sub-section name, or null if none.",
+      "required": "true = must be included; false = include only if relevant to this study.",
+      "complexity": "Classification tags indicating extraction difficulty and protocol availability. Drives the RLM iteration budget and availability flags.",
+      "is_in_protocol": "true if the information is expected to be findable in the study protocol.",
+      "partially_in_protocol": "true if only some fields can be extracted from the protocol; the rest require manual entry by the study team.",
+      "is_standard_text": "true if required_text is boilerplate that can be used verbatim — no extraction needed.",
+      "instructions": "Author-facing directions for writing this ICF section. Not participant-facing. Used to guide LLM extraction.",
+      "required_text": "Mandated ICF wording. Contains {{placeholders}} to be filled in. Empty string if the section uses suggested_text only.",
+      "suggested_text": "Sample ICF language to use as a starting point. Contains <conditions>, <<block conditions>>, {{placeholders}}, and OR alternatives. Not required wording — adapt to the study.",
+      "suggested_text_format": "'text' (default) or 'html' — set to 'html' and use an HTML string in suggested_text when table content is needed.",
+      "adaptation_notes": "Runtime-only field. Set by the dynamic adaptation pass to inject study-specific context into extraction prompts. Always null in the base registry; never serialised back to this file."
+    },
+    "template_notes": "This registry encodes the UHN Minimal Risk ICF Template (Document Version Date 22Oct2024). It differs from the standard (non-minimal) ICF template: there is no separate 'WHAT IS THE BACKGROUND INFORMATION FOR THIS STUDY?' section, no 'WHAT OTHER CHOICES ARE THERE?' section, no 'ASSIGNMENT TO A GROUP' section, no 'WHAT IS THE STUDY INTERVENTION?' section, no separate 'WHAT ARE THE STUDY PROCEDURES?' heading (procedures are described under 'WHAT WILL HAPPEN DURING THIS STUDY?'), no 'WHAT ARE THE REPRODUCTIVE RISKS?' section, and no 'DATA SAFETY MONITORING' section. The risk section (18) only describes risks of study-related procedures (no separate intervention-risk subsection 18.1). Several sections that contain mandated text in the standard template (e.g., 16, 17, 21.1, 23, 26) are presented as suggested/example text in the minimal risk template."
+  },
+  "sections": [
+    {
+      "section_id": "2.1",
+      "heading": "Informed Consent Form for Participation in a Research Study",
+      "sub_section": "Study Title:",
+      "required": true,
+      "complexity": [
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Insert study title as written on the protocol. Should the title be complicated, a title in simplified lay terms could be included after the full title of the study.",
+      "required_text": "",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "2.2",
+      "heading": "Informed Consent Form for Participation in a Research Study",
+      "sub_section": "Sponsor’s Study ID/Protocol number:",
+      "required": false,
+      "complexity": [
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Insert sponsor’s study ID if applicable.",
+      "required_text": "",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "2.3",
+      "heading": "Informed Consent Form for Participation in a Research Study",
+      "sub_section": "Study Doctor:",
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry",
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "Insert name, department and telephone or pager number.\nIndicate “Dr.” only for doctors licensed to practice medicine in Canada; indicate “Nurse” only for nurses licensed to practice in Canada. All other Investigators should be referred by their credentials and, if applicable, country of practice. (E.g., “Dr. Tom Smith,” “Ms. Jane Smith, Nurse Practitioner,” “George Brown. PhD,” “George Brown, Nurse Practitioner, (New Zealand)”)",
+      "required_text": "",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "2.4",
+      "heading": "Informed Consent Form for Participation in a Research Study",
+      "sub_section": "Co-Investigators:",
+      "required": false,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Listing Co-Investigators is discouraged, but should be considered for studies involving expertise from different departments (e.g., multimodal studies).\n\nIf you choose to enter the names and titles of Co-Investigators, keep in mind that, at any point there is a change in a Co-Investigator, the consent form will require revision, review, and approval by the REB.",
+      "required_text": "",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "2.5",
+      "heading": "Informed Consent Form for Participation in a Research Study",
+      "sub_section": "Sponsor/Funder(s):",
+      "required": false,
+      "complexity": [
+        "Not in protocol - requires manual entry",
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "Insert the name of the Sponsor or, if applicable, the funder(s) of the research as documented in the protocol and/or application form, including, if applicable, drug suppliers. In general, UHN should not be indicated as a sponsor unless the UHN is a regulatory sponsor, then the entity that funds the study should be indicated as well as non-for-profit status of the UHN.\n\nShould communication via e-mail be suggested, when providing an e-mail address, include a disclaimer (as applicable). Only UHN email addresses should be provided to participants.",
+      "required_text": "",
+      "suggested_text": "<If email communication is suggested — choose ONE of the following>\nPlease note that communication via e-mail is not absolutely secure. Thus, please do not communicate personal sensitive information via e-mail.\nOR\nPlease note that the security of e-mail messages is not guaranteed. Messages may be forged, forwarded, kept indefinitely, or seen by others using the Internet. Do not use e-mail to discuss information you think is sensitive. Do not use e-mail in an emergency since e-mail may be delayed.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "3",
+      "heading": "INTRODUCTION",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "{{main features of population}}: Explain the main features of the population to which the research applies. Do not include an extensive list of inclusion/exclusion criteria. A high-level summary is required (e.g., 'you have been diagnosed with [condition]', 'you are a healthy adult volunteer').\n\n{{Specify other potential participant concerns}}: Specify any other areas where participants might be concerned about a potential penalty or discrimination (e.g., 'the decision will not affect your employment'). Omit if no such concerns apply.\n\nSUBSTITUTE DECISION MAKER (SDM): For studies where consent is sought through a substitute decision maker, prepend the SDM paragraph (see suggested_text) before the main introduction.",
+      "required_text": "You are being invited to participate in a research study. You are invited to participate in this study because you {{explain the main features of the population to which the research applies}}. This consent form provides you with information to help you make an informed choice. Please read this document carefully and ask any questions you may have.  All your questions should be answered to your satisfaction before you decide whether to participate in this research study.\n\nPlease take your time in making your decision.  You may find it helpful to discuss it with your friends and family.\n\nTaking part in this study is voluntary.  You have the option to not participate at all or you may choose to leave the study at any time.  Whatever you choose, it will not affect the usual medical care that you receive outside the study. {{Specify any other potential areas where participants might be concerned about a potential penalty or discrimination, such as the decision will not affect your employment — omit if none apply}}.",
+      "suggested_text": "<<For studies where consent is sought through a substitute decision maker, prepend this paragraph before the main introduction>>\nAs a Substitute Decision Maker, you are being asked to provide informed consent on behalf of a person who is unable to provide consent for themselves.  If the participant gains the capacity to consent for themselves, your consent for them will end.  Throughout this form, “you” means the person you are representing.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "4",
+      "heading": "IS THERE A CONFLICT OF INTEREST?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "ALWAYS include this section — every ICF must declare conflicts of interest (or state there are none).\n\nDescribe any conflict of interest that exists or may appear to exist as it relates to any of the investigators, study staff or member of their immediate family. A conflict of interest exists if there is a potential benefit to the investigator(s), study staff or member of their immediate family including the professional benefit from academic achievement or presentation of the results. Examples include, but are not limited to, speaker’s fees, travel assistance, consultant fees, honoraria, gifts, and intellectual property rights such as patents.\n\nA declaration of conflict of interest should include the identity of the person with the conflict of interest, the type of incentive or inducement, and its source.\n\nSELECT the most appropriate option from the suggested_text below:\n- Option 1: Investigator receives personal financial payment from an external source\n- Option 2: The institution/hospital receives financial payment (indirect conflict)\n- Option 3: Sponsor reimburses hospital/researcher for study costs (sponsored studies — most common)\n- Option 4: Researchers have a general interest in completing the study (internally funded studies — minimal conflict)",
+      "required_text": "",
+      "suggested_text": "<for Option 1, personal payment to investigator, use the following>\nThe {{identify individual, e.g., study doctor/researcher}}, {{insert name}}, is receiving personal financial payment from {{identify source of funds e.g., the study Sponsor}} for {{include reason for payment e.g., providing advice on the design of the study}}. You may request details about this payment.\nOR\n<for option 2, the instituion/hospital receiving financial payment, use the following>\nThe {{insert recipient of funding e.g., hospital}} is receiving financial payment from the {{Sponsor/Funder}} to cover the cost of conducting this study.\nOR\n<For option 3, sponsored studies, use the following>\n{{Insert name of company}}, the sponsor of this study, will reimburse the hospital and researcher for the costs of doing this study. All of these people have an interest in completing this study. Their interests should not influence your decision to participate in this study.\nOR\n<For option 4, internally funded studies, use the following>\nResearchers have an interest in completing this study. Their interests should not influence your decision to participate in this study.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "6",
+      "heading": "WHY IS THIS STUDY BEING DONE?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Please include 2-3 sentences about the background of the study, including any experience(s) to date, what led to the development of the study (e.g., data from other studies), current standard of care (if applicable), etc.\n\nExplain the purpose of the study in lay terminology, for example: the purpose of this study is to look at an approved intervention to obtain additional information about {{specify purpose}}.",
+      "required_text": "The purpose of this study is to {{explain the purpose of the study}}",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "8",
+      "heading": "HOW MANY PEOPLE WILL TAKE PART IN THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity",
+        "Potentially in protocol",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "Indicate the total number of participants, where this study is taking place, and how many participants are specifically particpating at University Health Network (UHN), inclusive of any UHN sites. Indicate how long the study will take overall and when results are expected to be available. Note: Do not discuss the length of individual participation in the study in this section. This section should indicate the total study length.",
+      "required_text": "It is anticipated that about {{insert total number of participants, across all sites}} people will take part in this study, from research sites located in {{indicate for example, Canada/around the world/in North America etc.}}.  It is expected that {{insert number of participants participating at UHN specifically, including Toronto Western Hospital, Toronto General Hospital, or any other University Health Network site}} will be from UHN.\n\nThis study should take {{total length of study in months or years}} to complete and the results should be known in about {{anticipated time to complete analysis and have results be available, in months or years}}.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "If no study related visits are required, indicate this.\n\nIf just a few visits are required, indicate the approximate duration of each visit.\n\nIf applicable, indicate if and where procedures are to be performed outside of UHN or at varying UHN sites.",
+      "required_text": "",
+      "suggested_text": "<If no study related visits are required, use the following text to indicate this>\nNo study related visits are required.\n\n<If the patient is required to remain on site after standard of care visits, indicate using the following text as an example>\nYou will be asked to remain on site after your standard of care visits for approximately 15 minutes for study related activities/We will gather information about you from your medical chart.\n\n<If just a few visits are required, indicate the approximate duration of each visit using the following text as an example>\nThere will be two (2) study visits during your participation in this study. Visit 1 will be one (1) hour and Visit 2 will be 30 minutes.\n\n<If applicable, indicate if procedures are to be performed outside of UHN or at varying UHN sites, using the following text as an example>\nStudy Visit 1 will take place at the Toronto Rehabilitation Institute, Lyndhurst Centre and Study Visit 2 will take place at Toronto Western Hospital.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.1",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Research Procedures",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "In a bullet format, provide a description of the research procedures and the nature of participation. Ensure that the information provided accurately describes the procedures being used in this specific study. Include a lay explanation, if not obvious, of what each test involves.\n\nFor imaging procedures, specify the standard clinical imaging procedure, explain deviation from normal care, and state the number of times imaging will be done.\n\nIf applicable, list study-related procedures (in bullet format). \n\nIf there are no procedures required of the participants, proceed to the next sections to explain what will happen in the study. Don't include repositories, databases, focus groups, interviews, questionnaires or participant diaries in this section as they belong in a separate section.",
+      "required_text": "",
+      "suggested_text": "<Example for studies involving imaging>\nYou will be asked to have {{insert name of standard clinical imaging procedure}}.  This scan is already used in medical care, but would not normally be done {{explain deviation from normal care of the study population}}. You will be asked to have this {{enter number of times}} times throughout this study.\n\n<If applicable, list other study-related procedures (in bullet format).Include a lay explaination, if not obvious, of what each test involves. From the following list, list only those that relevant to the study. Example>\nThe following will be done as part of this study:\n• Medical History\n• Physical Exam\n• ECG (Electrocardiogram)- An electrocardiogram is a test that measures the electrical activity of the heart. Patches attached by wires to a machine will be put on your chest so that the machine can record the pattern of your heart beats.\n• Skin Photography - Describe exactly what will be photographed\n• Videography - Describe exactly what will be videotaped\n• Pulmonary Function Test - A group of tests that measure how well your lungs take in and let out air and how well they move oxygen into your blood.  For this test, you will take deep breaths and blow into a tube connected to a machine.\n• Echo (Echocardiogram) – A test that uses sound waves to create a moving picture of the heart to measure how well your heart is functioning.  The picture is much more detailed that a regular x-ray picture and does not involve any radiation exposure.  An instrument that sends high frequency sound waves will be placed on your ribs near the breastbone directed toward your heart.\n• X-ray– Specify what part(s) of the body will be scanned\n• Dexa Scan - A bone mineral density scan is a special x-ray test that measures the amount of calcium in bones.  It is a non-invasive procedure and it takes about 15 - 30 minutes.\n• MUGA Scan - A radioactive tracer is injected via IV (inside your vein) which attaches to blood cells.  Then an instrument is used to see inside your heart.\n• MRI (Magnetic Resonance Imaging) - Use of magnetic waves to take pictures of the inside of your body.  You will have to lie still in a MRI machine but will be able to speak to someone at all times.\n• MRI (Magnetic Resonance Imaging) with gadolinium contrast - Use of magnetic waves to take pictures of the inside of your body.  You will have to lie still in a MRI machine but will be able to speak to someone at all times.  Prior to the MRI scan you will have a gadolinium contrast injection via IV (inside your vein).\n\nThe scans are being done for research purposes only, and will not be used to guide your medical care.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.2",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Repositories or database studies",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Use this sub-section for repositories or database studies. Specify source of information (e.g., medical chart) and the responsible individual/group who will maintain the database.\n\nIf the database information or samples will be used or shared for future research, include the future-research paragraph.",
+      "required_text": "",
+      "suggested_text": "<Example for repositories or database studies>\nThe researchers will collect information about you from {{specify source of information e.g., your medical chart}} and enter this information into an electronic database.  The data will be securely stored, and will be maintained by {{specify responsible individual/group}}.  The database can only be accessed by people who are involved in research.\n\nPlease talk to the research team if there is information that you do not feel comfortable sharing.\n\n<If the database information or samples be used or shared for future research, include the following (as applicable)>\nYour coded study data and/or coded samples may be used or shared with other researchers (inside and outside of Canada) for future studies.  “Coded” means that directly identifying information (such as your name and date of birth) will be replaced by a number, which will be applied to the study data and/or samples. The code matching your {{study data and/or samples}} with your name and other directly identifying information will be kept by the UHN study team.\n\nThis may include storing the {{coded study data and/or samples}} in\n• Controlled-access {{databases or biobanks}}.  Access to them is limited to researcher(s) who submit a study plan and who sign an agreement to use the coded study data and/or coded samples only for that research.\n• Open access, publicly accessible databases.  Only very limited coded study data may be placed in such databases. The goal of sharing is to make more research possible.\n\nYou will not be asked if you agree to take part in future research studies using your {{study data and/or samples}}. You or your study doctor will not be told what type of research will be done. You will not be given reports or other information about any research that is done with your {{study data and/or samples}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.3",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Focus Groups",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Specify how many focus group(s) and information about timing (e.g., before you begin the study and then every X weeks/months). Specify length in minutes or hours and the location. Explain topics of discussion. Specify if any recording devices will be used.",
+      "required_text": "",
+      "suggested_text": "You will be asked to attend {{specify how many focus group(s)}} {{if more than one focus group, provide information about timing e.g., before you begin the study and then every X weeks/months}}.  A focus group is a small group of representative people who are asked to speak about their opinions as part of the research.  A moderator will organize the focus group(s).  Each focus group discussion will be about {{specify length in minutes or hours}} in length and will take place {{specify location}}.  You will be asked to speak about {{explain topics of discussion e.g., your experiences with condition/intervention}}.\n\nWhile the study team will take precautions to protect your confidentiality, we cannot guarantee that other members of the focus group will respect your privacy or keep the discussions of the group confidential.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.4",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Interviews",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Specify the number of interviews and information about timing. Specify the length in minutes or hours. Specify the location for the interviews. Specify the topics of discussion.",
+      "required_text": "",
+      "suggested_text": "You will be asked to participate in {{specify how many interviews}} {{if more than one, provide information about timing e.g., before you begin the study and then every X weeks/months}}.  During this interview, you will speak with/meet with a member/members of the research team and {{specify others if applicable}}.  Each interview will be about {{specify length in minutes or hours}} in length and will take place {{specify location}}.  You will be asked to provide information about {{explain topics of discussion e.g., your experiences with condition/intervention}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.5",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Recordings",
+      "required": false,
+      "complexity": [
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Specify if the interview/focus group will be recorded.",
+      "required_text": "",
+      "suggested_text": "You will be {{audio/video}} recorded during the {{specify e.g., interview(s)/focus group}}. The purpose of the recording is to ensure that the researchers are able to gather complete and accurate information. The recordings will be transcribed and then deleted.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.6",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Questionnaires",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Provide information about the timing of questionnaires. Include a description of the purpose. Indicate the estimated time to complete in minutes.\n\nIf the questions are of a sensitive nature, explain that they might experience emotional distress, explain what they should do and what type of help will be provided if this happens.\n\nIf questionnaires include medically relevant information, but won't be reviewed, note that the responses will not be reviewed by their health care team or study team, and that information should be brought to their attention if they wish for their health care team to know.",
+      "required_text": "",
+      "suggested_text": "You will be provided with a questionnaire {{provide information about the timing of questionnaires e.g., before you begin the study and then every two weeks for a year}}. The purpose of the questionnaire is {{include description of purpose e.g., to understand how the study intervention and illness affects your quality of life}}.  Each questionnaire will take about {{indicate estimated time to complete in minutes}} to complete.\n\nThe information you provide is for research purposes only.  Some of the questions are personal.  You can choose not to answer questions if you wish.\n\n<If the questions are of a sensitive nature, explain that they might experience emotional distress, explain what should they do and what type of help will be provided if this happens>\n\n<If questionnaires include medically relevant information, but won't be reviewed, include the following>\nEven though you may have provided information on a questionnaire, these responses will not be reviewed by your health care team or study team - if you wish them to know this information please bring it to their attention.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "9.7",
+      "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
+      "sub_section": "Participant Diaries",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Inform the participant of the expectations associated with the participant diary.",
+      "required_text": "",
+      "suggested_text": "You will be asked to keep a diary of {{identify information to be recorded}}.  You will be asked to return the diary to this centre.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": null,
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Describe sample collection, including the sample type and amount, manner/safety of acquisition, purpose of the research (including any known commercial use), measures employed to protect privacy and minimize risk, and length, method, and location (city and country only) of storage.\n\nInclude a study-specific lay explanation of the research purposes for all samples collected.\n\nSpecify what will happen to samples once the mandatory research has been completed.\n\nDescribe who will be informed of the results of the mandatory research. Specify if results will be placed in the individual's medical record.",
+      "required_text": "",
+      "suggested_text": "The researchers doing this study need to do tests on samples (described below) to {{insert study specific LAY explanation of the research purposes for all samples collected}}.\n\nThe collection of these samples is a necessary part of this study.  The samples will not be sold.\n\n<Specify what will happen to samples once the mandatory research has been completed. For example>\nOnce these tests have been completed, any leftover samples will be returned to the facility from which they were obtained, if needed, or destroyed.\n\n<Describe who will be informed of the results of the mandatory research. For example — choose ONE of the following>\nReports about any research tests done with your samples will not be given to you, the study doctor(s) or study staff, your doctor, or other health care provider(s). These reports will not be put in your medical records.\nOR\nReports about research tests done with your samples will be given to the study doctor(s).  If you would like to learn the results of this research, please let them know. {{Specify if results will be placed in the individual's medical record}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.1",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "Tissue Collection",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "This section is only relevant for tissue collection via biopsy or surgery, either collected before or during the study period. If no tissue collection is involved, omit the content in this section. Describe the method of tissue sample collection and associated risks. Specify the location and purpose for the review.See example text below, or revise as applicable to the research. \n\nIf applicable, Explain whether they may still participate if a sample is not available or whether a fresh tissue sample will then be required.\n\nIf archived specimens are required from another institution, indicate this.\n\nIf a fresh tissue sample is required, state how much tissue is to be taken and the tissue type. Explain in lay language whether this will be done using a local or general anesthetic and whether overnight hospital stay may be required.",
+      "required_text": "",
+      "suggested_text": "A small sample of your tissue that has already been removed by a previous surgery or biopsy will be obtained by the researchers doing this study. No further surgeries or biopsies are required of you for this purpose. {{If applicable, explain whether they may still participate if a sample is not available or whether a fresh tissue sample will then be required – see below}}.\n\n<<If archived specimens are required from another institution, include the following>>\nIf your biopsy or surgery were completed at another institution, signing this consent form means that you are consenting to the collection of your tissue sample, together with any related personal health information, from that institution.\n\n<<If a fresh tissue sample is required>>\nAs part of this study, you will have a tissue biopsy. A tissue biopsy is a type of surgical procedure, which will remove {{state how much tissue is to be taken e.g. a pea size piece}} of your {{insert tissue type e.g., liver}}. {{Explain in lay language whether this will be done using a local or general anesthetic and whether overnight hospital stay may be required}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.1.1",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "Blood/Urine/Other Collection",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Describe the method of blood/urine/other sample collection and associated risks. Specify the number of samples to be collected and timing (e.g., specify if 24-hour collection) if multiple samples are required. Specify the location and purpose for the review.\n\nFor blood collection, specify the amount of blood to be collected and timing if additional samples are required, and the tests to be done on these samples.",
+      "required_text": "",
+      "suggested_text": "These samples will be collected at {{specify location (city and country only)}} for the purpose of {{specify purpose of the review e.g., pharmacokinetic analysis, biomarker testing}}.\n\n• Urine will be collected {{Specify number of samples to be collected and timing (e.g., specify if 24 hour collection) if multiple samples are required}}.\n• Blood samples will be taken by inserting a needle into a vein in your arm. These will be taken at the same time as tests required for your clinical care whenever possible, {{describe sample timing e.g. at entry to the study and <X> weeks after that}}. {{Specify amount of blood to be collected and timing if additional samples are required and the tests to be done on these samples}}.\n• Pharmacokinetics (PK) testing: Blood samples will be taken to study how the drug is absorbed, distributed, broken down, and how it gets out of your body. The blood samples will be taken at different visits either before and/or after the drug is taken.\n• Biomarker(s) (biological flags used to measure disease progress or drug effect):  {{Describe what would be done}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.2",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "How will samples be identified?",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Specify which identifiers will be on the sample(s). If additional personal information is also being provided to the laboratory (e.g., on additional forms provided with the review materials), include a description of the information provided.\n\nIdentify location where specimens will be retained. If samples are to be sent to different locations, please specify.",
+      "required_text": "",
+      "suggested_text": "To protect your identity, the information that will be on your samples will be limited to {{specify which identifiers will be on the sample(s)}}.\n\n<If additional personal information is also being provided to the laboratory, include a description of the information provided>\nThe laboratory will also receive information containing your {{specify}}.\n\n<Identify location where specimens will be retained. If samples are to be sent to different locations, please specify. For example>\nThese {{tissue/blood/urine}} samples will be sent to a laboratory at {{insert location (city and country only)}}, where they will be examined.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.3",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "Genetic Testing",
+      "required": false,
+      "complexity": [
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "This section should only be included if the study involves genetic testing. If no genetic testing is involved, omit the content in this section. Genetic risk increases with the scope of the genetic intervention. With greater application of whole genome/exome sequencing, consideration should be given a priori to the likelihood that inheritable conditions or actionable genetic incidental findings may be discovered during the course of the research. This risk should be reflected in the consenting process. In general, these risks are not applicable to pharmacogenetic testing of specific drugs or drug combinations.\n\nNOTE: the below provided examples are applicable to genetic testing, including whole genome/exome sequencing, aside from pharmacogenetics or pharmacogenomics.\n\nIf the study includes genetic testing, include the suggested text.\n\nInclude the whole genome sequencing paragraph if applicable (i.e., sequencing of a human germline or somatic specimen with the intent to generate the genome or exome sequence of that specimen).\n\nInclude the First Nations / Inuit / Métis paragraph only if relevant to the target population.",
+      "required_text": "",
+      "suggested_text": "This study involves genetic testing.  Researchers will be looking at your genes (DNA).\n\nHereditary genetic testing (to look at whether {{specify condition}} runs in families) {{will not/will/may}} be done on these samples.\n\n<Include if applicable (i.e., sequencing of a human germline or somatic specimen with the intent to generate the genome or exome sequence of that specimen)>\nThe study {{will/may}} involve whole genome sequencing. Whole genome sequencing is the analysis of the complete set of genetic instructions in a cell.\n\nEvery person has their own unique set of genes or “genome”. The reason this is important is because genetic results might contain information (for example, an inherited genetic disease) that could impact you or your biological (blood) relatives.  When you donate your genetic information or materials you are sharing information about yourself, and it can be used to identify these relatives.\n\nEven with protections in place, absolute confidentiality cannot be guaranteed. Advances in technology could also increase the risk that your genetic samples and results could be linked back to you or your relatives.  There is no way to predict what effects such an information loss would have. For example, if an insurer, a current or future employer, or law enforcement were to learn your genetic code it could result in loss of privacy and to possible future discrimination in employment or insurance against you or your relatives.  Even though this risk is unlikely, we think you should be aware. However, the only identifying information that will be present on the sample is your study number.\n\nDue to the rapid pace of technological advances, the potential future use of genetic information is unknown and therefore the potential future risks also are unknown and there may be a risk that the genetic information in the samples could be linked back to you.\n\nYou will be {{given the choice/not given the choice}} to find out about genetics testing results.\n\n<Include only if relevant to target population>\nIf you are a First Nations, Inuit, or Métis person who has contact with Elders, you may want to talk to them before you make a decision about this research study. Elders may have concerns about some research procedures including genetic testing.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.4",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "Can I withdraw these samples?",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "Describe the process for withdrawal of samples, and any limitations to the withdrawal. Identify the appropriate contact person. Describe what will happen to samples if the participant withdraws consent.\n\nDescribe any limits of the withdrawal, if applicable.\n\nIf samples will be anonymized at a certain point, include the anonymization paragraph.\n\nState whether or not the participant may continue to participate in the study, if they withdraw required samples.",
+      "required_text": "",
+      "suggested_text": "If you no longer want your samples to be used in this research, you should tell {{specify appropriate contact person}}, who will ensure the samples are {{describe what will happen to samples if participant withdraws consent, e.g., returned to the hospital from which they were obtained or destroyed}}.\n\n<Describe any limits of the withdrawal, if applicable. For example>\nIf tests have already been done on your sample(s) it will not be possible to withdraw those results. However, no further testing will be done.\n\n<<If samples will be anonymized at a certain point>>\nYou can request withdrawal of your specimens until {{insert expected anonymization point}}, when the samples will be anonymized. “Anonymized” means the link between your personal identifying information and study ID/data will be deleted. After records linking your identity to your sample(s) are destroyed, it won't be possible to return samples after this because the researchers will not know which sample is yours.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "13.6",
+      "heading": "SAMPLE COLLECTION",
+      "sub_section": "Summary of Tests and Procedures",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "When the study involves a number of visits, e.g. more than 2-4, then provide a table with a summary of procedures, including the approximate time commitment (as applicable, based on the protocol).\n\nUse a complicated-schedule table when there are many study-related procedures and visits, or a non-complicated schedule table when there are few.",
+      "required_text": "",
+      "suggested_text": "<Example for a complicated schedule (use when there are many study-related procedures and visits)>\n<table><thead><tr><th>Tests</th><th>Visit 1/Week</th><th>Visit 2/Week 4</th><th>Visit 3/Week 8</th><th>Visits 4-10 every month</th></tr></thead><tbody><tr><td>Blood tests</td><td></td><td></td><td></td><td></td></tr><tr><td>Questionnaire</td><td></td><td></td><td></td><td></td></tr><tr><td>Length of visit</td><td></td><td></td><td></td><td></td></tr></tbody></table>\n\n<Example of a non-complicated schedule (use when there are few study-related procedures and visits)>\n<table><thead><tr><th>Visit</th><th>Tests and Procedures</th></tr></thead><tbody><tr><td>Screening</td><td>Blood tests, complete questionnaire…</td></tr><tr><td>Visit 1 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 2 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 3 {{approx visit length}}</td><td>Blood tests.</td></tr></tbody></table>",
+      "suggested_text_format": "html"
+    },
+    {
+      "section_id": "14",
+      "heading": "WHAT ARE THE RESPONSIBILITIES OF STUDY PARTICIPANTS?",
+      "sub_section": null,
+      "required": false,
+      "complexity": [
+        "Potentially in protocol"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Identify participant responsibilities. Include, add to, or modify bullets below as applicable.",
+      "required_text": "",
+      "suggested_text": "If you choose to participate in this study, you will be expected to:\n• {{Specify any responsibilities}}\n• Not discuss with others any information you learn in the focus group.  This includes information about other group members and any opinions or comments that are shared.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "15",
+      "heading": "HOW LONG WILL PARTICIPANTS BE IN THE STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Specify the duration of research involvement. See suggestions below, or revise as applicable to the research",
+      "required_text": "Your participation on this study will last for about {{insert duration}}.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "16",
+      "heading": "CAN PARTICIPANTS CHOOSE TO LEAVE THE STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "Insert information on the participant's right to request the withdrawal of data, including any limitations on the feasibility of that withdrawal.\n\nIf the study site CONTINUES using the participants' data after they have withdrawn from the study, it must be justified to the REB and explained to the participants; Canadian Guidelines (TCPS2) state that participants should be able to request that data and sample(s) be withdrawn unless withdrawal of data or samples may not be possible or is impracticable.\n\nIf this is a sponsored study, the participant should not be contacting the sponsor directly to withdraw. The participant's identifiable information should remain with the study site. The participant should only contact their study team to withdraw.\n\nConsidering that, in many instances, participants discontinue participation after verbally telling their study doctor or participants cannot write in English, as a UHN REB requirement, written withdrawal from participants shall not be required. Thus, no language in this section shall imply otherwise. If the sponsor requires written notification of withdrawal, the study doctor may provide written notification to the sponsor.\n\nCHOOSE ONE of the two main options in the suggested_text below — they are mutually exclusive:\n  - Option A: site continues to use already-collected data after withdrawal (most common)\n  - Option B: participant can withdraw information collected prior to withdrawal",
+      "required_text": "You can choose to end your participation in this research (called withdrawal) at any time without having to provide a reason.  If you choose to withdraw from the study, you are encouraged to contact the research team.",
+      "suggested_text": "<<Option A — If the study site continues using the participants' data after they have withdrawn>>\nInformation that was recorded before you withdrew will still be used by the researchers in order to answer the research question, but no new information will be collected without your permission after you withdraw from the study.\n\nOR\n\n<<Option B — If the participant can withdraw information collected prior to withdrawal>>\nIf you decide to leave the study, you can ask that the information that was collected about you not be used for the study.  Let the research team know if you choose this. Otherwise, information that was recorded before you withdrew will still be used by the researchers for the purposes of the study, but no new information will be collected after you withdraw from the study.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "17",
+      "heading": "CAN PARTICIPATION IN THIS STUDY END EARLY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Identify reasons why participants may be taken off the study. Examples are outlined in the suggested text. Include or modify bullets below as applicable.",
+      "required_text": "",
+      "suggested_text": "Your participation on the study may be stopped early, and without your consent, for reasons such as:\n• New information shows that the research is no longer in your best interest\n• The research team decides to stop the study\n• The research ethics board withdraw permission for this study to continue\n\nIf you are removed from this study, the research team will discuss the reasons with you.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "18",
+      "heading": "WHAT ARE THE RISKS OR HARMS OF PARTICIPATING IN THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Inform participants of all reasonably foreseeable risks, harms, discomforts or inconveniences. Include both physical, social/legal, and psychological/emotional risks as applicable to the research.\n\nFor minimal risk studies, this opening statement (suggested_text) is typically sufficient. Detailed risks of study-related procedures (e.g., MRI, ECG, blood draw) are listed under sub-section 18.1.\n\nEnsure suggestions are correct and applicable to the research study.",
+      "required_text": "",
+      "suggested_text": "There are no medical risks to you from participating in this study, but taking part in this study may make you feel uncomfortable.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "18.1",
+      "heading": "WHAT ARE THE RISKS OR HARMS OF PARTICIPATING IN THIS STUDY?",
+      "sub_section": "Risks of study related procedures:",
+      "required": false,
+      "complexity": [
+        "Complex mapping",
+        "Potentially in protocol"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "CONDITIONAL: Include this sub-section only when the study involves specific procedures whose risks need to be described (e.g., imaging, blood draws, biopsies, questionnaires, focus groups). Omit if all procedures are routine and already familiar to the study population.\n\nSTEP 1 — Identify the study's non-standard procedures by searching the protocol directly. Build a list of every procedure type mentioned (e.g., MRI, X-ray, blood draw, biopsy, questionnaires, focus group, etc.).\n\nSTEP 2 — From the suggested_text below, keep ONLY the risk entries that match the procedures you identified. Remove every risk entry for procedures NOT present in this study. Do not fabricate risk descriptions — use only the entries provided.\n\nSTEP 3 — For any kept risk entry that contains {{placeholders}}, fill them in using study-specific details from the protocol.\n\nPlease insert risks of procedures being done for study purposes only.",
+      "required_text": "",
+      "suggested_text": "Risks of X-ray - Exposes you to doses of radiation. {{Indicate risks}}.\n\nRisks of MRI - It is painless but noisy. If you have any metal in your body, for your safety, please tell the staff.  There is no radiation. Some people may feel a little ‘closed-in’ the MRI machine, but you will be able to speak with someone at all times and can stop the test at any time.\n\nRisks of MRI with Gadolinium Contrast - It is painless but noisy. If you have any metal in your body, for your safety, please tell the staff.  There is no radiation. Some people may feel a ‘closed-in’ the MR machine, but you will be able to speak with someone at all times and can stop the test at any time.\n\nGadolinium is a contrast agent used in MRI imaging that helps to better see any abnormal tissues and see blood vessels.  Gadolinium contrast is not safe to use in people who have kidney problems.  If you have had a problem with your kidneys, please inform the study team of this problem before the procedure. There is a small risk {{quantify}} of allergic reaction with gadolinium that can include symptoms of itchiness or rash. Rarely, a serious reaction may develop involving your kidneys leading to hardened skin lesions all over your body and stiffening of your joints. You must seek medical attention immediately if you develop any symptoms of allergic reaction.\n\nRisks of ECG - This test is painless, and you should not feel anything while the ECG is done.  Since the ECG machine will be connected to your body by sticky patches, like bandages, these may cause your skin to become mildly irritated.\n\nRisks of MUGA Scan - Exposes you to low levels of radiation with the radioactive tracer. The radioactive tracer is eliminated in approximately 24 hours.\n\nRisks of a Pulmonary Function Test - You may feel short of breath and light-headed while doing the test.\n\nRisks of Dexa Scan - Exposes you to low levels of radiation, approximately 1/5 to 1/2 (20-50%) that of a chest x-ray.\n\nRisks of Blood Draw/Catheter Blood Draw - There is a possibility of pain, bruising, swelling, or infection related to giving blood.\n\nRisks of Skin Photography - {{Insert, if applicable, risk of breach of confidentiality}}.\n\nRisks of Videography - {{Insert, if applicable, risk of breach of confidentiality}}.\n\nRisks of Questionnaires – {{Outline, if applicable, sensitivity of questions}}.\n\nRisks of Tissue Sampling - {{Risk depends on the method (e.g. aspirate, punch biopsy, incision biopsy etc.), therefore, list applicable risks}}. This procedure has risks such as {{specify risks, e.g., blood loss, pain and rarely an infection at the biopsy site}}.\n\nRisks of Archival Tumor Tissue Collection\nThere are no physical risks to you in releasing archived tumor samples for the purpose of this study since the tissue has already been obtained by a previous biopsy/surgical procedure. However, it is possible that, if your tumor tissue is released for this study, there will be insufficient tumor tissue for any possible future testing that requires tumor tissue. Please speak to the study doctor to discuss this possibility.\n\nRisks of Focus Groups/Interviews:\nYou may become uncomfortable while discussing your experiences.  You may refuse to answer questions or leave the {{group/interview}} at any time if you experience any discomfort.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "20",
+      "heading": "WHAT ARE THE BENEFITS OF PARTICIPATING IN THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Inform participants of potential benefits to themselves and in general that may arise. If there is no known benefit, ensure this is stated.",
+      "required_text": "",
+      "suggested_text": "<If there is no likely benefit to participation, include the following>\nThere are no benefits to you for taking part in this study.\n\n<If the benefit is known, include>\nThe expected benefit from taking part in this study is {{specify}}.\n\n<If applicable, include>\nYou may not receive direct benefit from participating in this study.  We hope the information learned from this study will help other people with {{specify}} in the future.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "21.1",
+      "heading": "HOW WILL PARTICIPANT INFORMATION BE KEPT CONFIDENTIAL?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Complex mapping",
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "OUTPUT STRUCTURE: Use the suggested_text as the complete template, filling in all {{placeholders}} and resolving all <<conditional blocks>> by searching the protocol. The required_text contains the mandatory paragraphs that must be reproduced verbatim — do not rephrase or omit them.\n\nNote: Should there be disclosure of personal identifiers, i.e., disclosed on any research-related information/documents including samples or scans, or as part of the unique identifier, these disclosures must be justified in the REB application and accepted by the REB.\n\nInclude only those organizations requiring permission for direct access to participant medical records containing identifying information (e.g., permission to conduct on-site monitoring/auditing). Include a brief description of their role in the research.\n\nInclude organizations with permission to receive study data only (organizations with direct access must be included in the list of organizations with direct access). Include a brief description of their role in the research.\n\nIf race/ethnicity information is collected as part of the study, identify this and provide a rationale.\n\nIf the study involves a focus group/interview, include a statement on confidentiality measures.\n\nIf it involves a video/audio recording, describe confidentiality measures (who will have access, how long, where recordings will be retained).\n\nIf identifiable data are to be sent outside the institution, or the study uses a third party to perform study related activities, indicate who will be involved, for what purpose, and what identifiable data would be included.\n\nIf the study is a Health Canada regulated study, include the 15-year retention statement. If NOT Health Canada regulated, include the 10-year retention statement.",
+      "required_text": "If you decide to participate in this study, the research team will only collect the information they need for this study.\n\nYour data will be shared as described in this consent form and/or as required by law and/or applicable research regulations. Records identifying you at this centre will be kept confidential and, to the extent permitted by applicable laws, will not be disclosed or made publicly available.\n\nAuthorized representatives of the following organizations may come to the hospital or be given remote access to an electronic portal (via Internet) to look at your original (identifiable) {{medical/clinical study}} records at the site where these records are held, to check that the information collected for the study is correct and follows proper laws and guidelines. When using the electronic portal, we will share your medical record number using a secure method, so that your records are included as part of their review.\n\n• Representatives of the University Health network, including the UHN Research Ethics Board who oversees the ethical conduct of this study at UHN\n\nThese individuals have completed privacy training and signed confidentiality agreements and/or are required by law to keep your information confidential.\n\nWhether on-site or remotely, UHN makes all efforts to ensure that your information is shared in a way that is secure and private (encrypted). However, any electronic communication carries some risk of third parties gaining unauthorized access to information.\n\nInformation that is collected about you for the study (called study data) may also be sent to the organizations listed above.  Your name, address, email, or other information that may directly identify you will not be used. The records received by these organizations will contain your {{disclose identifiers}}.\n\nIf the results of this study are published, your identity will remain confidential. It is expected that the information collected during this study will be {{include description of proposed uses of data}}.\n\nEven though the likelihood that someone may identify you from the study data is very small, it can never be completely eliminated.\n\nYour participation in this study will also be recorded in your medical record at this hospital.",
+
+      "suggested_text": "If you decide to participate in this study, the research team will only collect the information they need for this study.\n\nYour data will be shared as described in this consent form and/or as required by law and/or applicable research regulations. Records identifying you at this centre will be kept confidential and, to the extent permitted by applicable laws, will not be disclosed or made publicly available.\n\nAuthorized representatives of the following organizations may come to the hospital or be given remote access to an electronic portal (via Internet) to look at your original (identifiable) {{medical/clinical study}} records at the site where these records are held, to check that the information collected for the study is correct and follows proper laws and guidelines. When using the electronic portal, we will share your medical record number using a secure method, so that your records are included as part of their review.\n\n• {{Insert sponsor name}}, the Sponsor of this study\n• Representatives of the University Health network, including the UHN Research Ethics Board who oversees the ethical conduct of this study at UHN\n• Health Canada (because they oversee the use of natural health products/drugs/devices in Canada) {{include for studies under Health Canada oversight only}}\n\nThese individuals have completed privacy training and signed confidentiality agreements and/or are required by law to keep your information confidential.\n\nWhether on-site or remotely, UHN makes all efforts to ensure that your information is shared in a way that is secure and private (encrypted). However, any electronic communication carries some risk of third parties gaining unauthorized access to information.\n\nInformation that is collected about you for the study (called study data) may also be sent to the organizations listed above.  Your name, address, email, or other information that may directly identify you will not be used. The records received by these organizations will contain your {{disclose identifiers e.g., participant code, sex, and year of birth}}.\n\n<<The following organizations may also receive study data>>\n<Include organizations with permission to receive study data only (organizations with direct access must be included in the list above). Include a brief description of their role in the research>\n• {{Identify any other organizations with permission to receive study data only}}\n\n<<If race/ethnicity information is collected as part of the study, identify this and provide a rationale>>\nThis research study is collecting information on race and ethnicity as well as other characteristics of individuals because {{specify reason e.g., these characteristics may influence how people respond to a drug}}. Providing information on your race or ethnic origin is {{voluntary/required}}.\n\n<<If focus group/interview>>\nDuring the discussions, participants will be encouraged to refrain from using names.  If names or other identifying information is shared during the discussion, it will not be included in the written records.\n\n<<If video/audio recording, describe confidentiality measures including, for example, who will have access, how long they will be kept, and whether they will be sent outside the institution. For example>>\nThe video/audio recordings will be stored in a secure location and viewed only by members of the research team.  The recordings will be kept until they have been transcribed (turned into written records), and then they will be destroyed.\n\n<<If identifiable data are to be sent outside the institution/study uses a third party to perform study related activities>>\nThis study requires the transfer of identifiable information to {{insert name of institution/individual}} for the purposes of {{specify purpose}}. The following information will be transferred:\n• {{Specify identifiable information to be transferred}}\n\nIf the results of this study are published, your identity will remain confidential. It is expected that the information collected during this study will be {{include description of proposed uses of data, e.g., used in analyses and will be published/ presented to the scientific community at meetings and in journals}}.\n\nEven though the likelihood that someone may identify you from the study data is very small, it can never be completely eliminated.\n\n<<If study is a Health Canada regulated study, insert the following>>\nThe study doctor will keep any personal health information about you in a secure and confidential location for 15 years as required.\n\n<<If study is NOT a Health Canada regulated study, insert the following>>\nThe study doctor will keep any personal health information about you in a secure and confidential location for 10 years.\n\nYour participation in this study will also be recorded in your medical record at this hospital.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "21.2",
+      "heading": "HOW WILL PARTICIPANT INFORMATION BE KEPT CONFIDENTIAL?",
+      "sub_section": "Research Information in Shared Clinical Records",
+      "required": true,
+      "complexity": [
+        "Potentially in protocol"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "OUTPUT STRUCTURE: Your filled_template must contain the required_text verbatim as the opening paragraph (the UHN hospital records / computer system statement — do not change a word), followed by any applicable suggested_text blocks.\n\nFor the suggested_text, resolve each conditional by searching the protocol:\n- <<If data or samples are to be sent outside of Canada>>: Include if the protocol specifies data or samples will be transferred to sites outside Canada (e.g., to a central lab, sponsor, or database in the US or Europe).\n- <<For studies using smartphones, apps or applicable technology>>: Include if the study uses a mobile app, wearable device, or third-party digital platform to collect study data. Fill in the app/tool/device name from the protocol.\n- <<For studies funded or supported by a US federal funding agency where researchers will NOT be using specimens or information for future research>>: Include only for US federally funded studies that will not use samples/data for future research even if de-identified.\n\nIf none of the conditions apply, output only the required_text.",
+      "required_text": "If you participate in this study, information about you from this research project may be stored in your hospital file and in the UHN computer system.  The UHN shares the patient information stored on its computers with other hospitals and health care providers in Ontario so they can access the information if it is needed for your clinical care.  The study team can tell you what information about you will be stored electronically and may be shared outside of the UHN.  If you have any concerns about this, or have any questions, please contact the UHN Privacy Office at 416-340-4800, x6937 (or by email at privacy@uhn.ca).",
+      "suggested_text": "<<If data or samples are to be sent outside of Canada>>\nAny information {{and/or samples}} sent outside of Canadian borders may increase the risk of disclosure of information because the laws in other countries dealing with protection of information may not be as strict as in Canada. However, all study data {{and/or samples}} that are transferred outside of Canada will be coded. This means they will not contain your personal identifying information such as your name, address, medical health number or contact information.\n\n<<For studies using smartphones, apps or applicable technology to collect the study data, specify the data to be collected and describe the security of the device/application>>\nData collected using the {{insert app/tool/device name}} reside on the {{insert name e.g., Apple}} servers and no assurance can be made about their confidentiality or that they will only be used for research purposes.\n\n<<For studies funded or supported by a US federal funding agency (e.g., NIH, DHHS, etc.) where researchers will NOT be using specimens or information for future research (even if identifiers are removed). This paragraph is not required for non-US federally funded studies>>\nYour study data and/or samples will not be used or shared with other researchers for future studies, even if the researchers remove any information that could directly identify you.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "22",
+      "heading": "WILL FAMILY DOCTORS/HEALTH CARE PROVIDERS KNOW WHO IS PARTICIPATING IN THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "CHOOSE ONE of the two options in the suggested_text (they are mutually exclusive):\n  - Option 1 (default for most therapeutic studies): Family doctor WILL or MAY be informed — use 'will' if it is standard practice to inform the family doctor; use 'may' if there are circumstances where the family doctor would not be informed.\n  - Option 2: Family doctor will NOT be informed — use for studies where confidentiality considerations mean the family doctor should not be routinely notified (e.g., some psychiatric, sexual health, or healthy volunteer studies).",
+      "required_text": "",
+      "suggested_text": "<<Option 1 — Family doctor will or may be informed>>\nYour family doctor/health care provider {{will/may}} be informed that you are taking part in a study so that you can be provided with appropriate medical care. If you do not want your family doctor/health care provider to be informed, please discuss this with the study team.\n\n<<Option 2 — Family doctor will NOT be informed>>\nOR\nYour family doctor/health care provider will not be informed by the study team that you are taking part in the study.  You can choose to let your family doctor/health care provider know, if you like.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "23",
+      "heading": "WILL INFORMATION ABOUT THIS STUDY BE AVAILABLE?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Easy - Standard text, no mapping required"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": true,
+      "instructions": "",
+      "required_text": "Study results will be shared with you if/when they become available after the entire study is completed. It is expected that this may take a number of years. The results will be shared with you based on your preferred communication method indicated in UHN's medical record system. Please talk to your study doctor if you have any questions about the results.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "24",
+      "heading": "WHAT IS THE COST TO PARTICIPANTS?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "If participation could result in additional costs, include an explanation of these potential costs. Ensure that examples of extra costs are consistent with the research project.\n\nIf participation will not result in any costs, include the no-additional-costs statement.",
+      "required_text": "",
+      "suggested_text": "<<If participation could result in additional costs, include an explanation of these potential costs. For example>>\nTaking part in this study may result in added costs to you.  For example:\n• There may be costs associated with study visits.  For example, parking or transportation, or snacks/meals during your stay.\n• You may miss work as a result of participation in this study.\n\n<<OR If participation will not result in any costs, include the following>>\nParticipation in this study will not involve any additional costs to you or your private health care insurance.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "25",
+      "heading": "ARE STUDY PARTICIPANTS PAID TO BE IN THIS STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Describe compensation provided to participants, or state if no compensation is provided.\n\nIf receipts or other documentation is required for re-imbursement, this must be justified to the REB and must be described.",
+      "required_text": "",
+      "suggested_text": "<<If there is no payment for participation>>\nYou will not be paid for taking part in this study.\n\n<<OR If participants are receiving any token of appreciation (revise as applicable to the study)>>\nIf you decide to participate in this study, you will receive ${{specify amount}} and, if applicable, {{specify the interval e.g., every three months}}.\n\n<<If there is re-imbursement of costs for participation>>\nIf you decide to participate in this study, you will be reimbursed ${{enter actual or maximum dollar amount}} for some study related expenses such as {{list reimbursable expenses as applicable}}.\n\n<<If receipts or other documentation is required for re-imbursement, this must be justified to the REB and must be described. For example>>\nYou will need to provide your receipts for {{insert expense types e.g., parking}} to the research staff in order to be reimbursed.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "26",
+      "heading": "WHAT WILL HAPPEN IF PARTICIPANT IS INJURED DURING THE STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Describe next steps in case of research-related injury.\n\nThis section shall not have qualifiers that suggest that a patient's rights to care could potentially be compromised in the event of study related injury and should only include the standard UHN wording.\n\nExamples of Unacceptable Wording:\n• “If you are treated according to the protocol, you will be covered by insurance held by the sponsor for medical costs arising from any study-related injury.”\n• “If you suffer any side effect or other physical injury resulting directly from the study drug, the Sponsor will pay for the reasonable costs of medical treatment to the extent permitted by the law of your country if: (a) You took the study drug as directed by the Study Doctor and your injury was not deliberately caused; (b) The Study Doctor was immediately notified about your injury, and the medical advice of the Study Doctor was followed.”",
+      "required_text": "",
+      "suggested_text": "In the case of research-related side effects or injury, medical care will be provided by {{specify e.g., your doctor or you will be referred for appropriate medical care}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "27",
+      "heading": "COMMERCIALISATION",
+      "sub_section": null,
+      "required": false,
+      "complexity": [
+        "Easy mapping complexity",
+        "Potentially in protocol"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "CONDITIONAL: Include this section only if the research could lead to commercial products (e.g., new drugs, devices, diagnostic tests). Alter as needed to fit the research.\n\nDetermine from the protocol or study context whether commercial development is a possibility. If yes, choose the appropriate sub-option:\n  - Option 1: Participants will NOT receive a share of any commercial profit (most common)\n  - Option 2: Participants WILL receive a share of commercial profits (rare — specify details)\n\nIf there is no possibility of commercialization, omit this section.",
+      "required_text": "",
+      "suggested_text": "<<If applicable (alter as needed to fit the research)>>\nIt is possible that the research conducted using your samples and/or study data may eventually lead to the development of new diagnostic tests, new drugs or devices, or other commercial products.\n\n<<If participants will not share in commercial profit>>\nThere are no plans to provide payment to you if this happens.\n\n<<If participants will share in commercial profits>>\nIf this happens, you will receive {{describe the participant's share in commercial profit}}.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "28",
+      "heading": "WHAT ARE THE RIGHTS OF PARTICIPANTS IN A RESEARCH STUDY?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Easy - Standard text, no mapping required"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": true,
+      "instructions": "",
+      "required_text": "You will be told, in a timely manner, about new information that may be relevant to your willingness to stay in this study.\n\nYour rights to privacy are legally protected by federal and provincial laws that require safeguards to ensure that your privacy is respected.\n\nBy signing this form you do not give up any of your legal rights against the study doctor, sponsor or involved institutions for compensation, nor does this form relieve the study doctor, sponsor or their agents of their legal and professional responsibilities.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "29",
+      "heading": "WHAT IF RESEARCHERS DISCOVER SOMETHING ABOUT A RESEARCH PARTICIPANT?",
+      "sub_section": null,
+      "required": false,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "If incidental findings are anticipated as a result of the study, include this section and address what information will be provided to participants. Indicate the anticipated incidental findings and the anticipated management plan.",
+      "required_text": "",
+      "suggested_text": "During the study, the researchers may learn something about you that they didn't expect.  For example, the researchers may {{insert anticipated incidental findings e.g. find out that you have another medical condition}}.\n\n<<Describe anticipated management plan. Examples — choose ONE>>\nIf any new clinically important information about your health is obtained as a result of your participation in this study, you will be informed.\nor\nIf any new information relevant to your or your relatives' health is obtained as a result of your participation in this study, you will be given the opportunity to decide whether you wish to be made aware of that information.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "31",
+      "heading": "WHOM DO PARTICIPANTS CONTACT FOR QUESTIONS?",
+      "sub_section": null,
+      "required": true,
+      "complexity": [
+        "Not in protocol - requires manual entry"
+      ],
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Fill in the {{insert person's name and telephone}} placeholders in the required_text with the Principal Investigator's (or designated study contact's) name and telephone number.\n\nThe REB contact details (UHN REB Chair, 416-581-7849) are standard and must not be modified.\n\nThe clause <<or if you suffer a research-related injury,>> is suggested — include it only if the study involves risk of research-related injury.\n\nThe sentence about the consent form being included in the participant's health record/hospital chart is suggested and may be omitted if not relevant.",
+      "required_text": "If you have questions about taking part in this study, <<or if you suffer a research-related injury,>> you can talk to the research team, or the person who is in charge of the study at this institution. That person is:\n\n____________________________     _________________________\nName                                                       Telephone\n\nIf you have questions about your rights as a participant or about ethical issues related to this study, call the Chair of the University Health Network Research Ethics Board (UHN REB) or the Research Ethics office number at 416-581-7849.  The REB is a group of people who oversee the ethical conduct of research studies. The UHN REB is not involved in the study at all. Everything that you discuss will be kept confidential.\n\nYou will be given a copy of this signed and dated consent form prior to participating in this study.",
+      "suggested_text": "A copy of the consent form that you sign to enter the study may be included in your health record/hospital chart.",
+      "suggested_text_format": "text"
+    }
+  ]
+}
