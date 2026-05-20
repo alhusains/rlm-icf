@@ -215,7 +215,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 data/
-!data/standard_ICF_template_breakdown.json
+!data/UHN_standard_ICF_template_breakdown_new.json
+!data/minimal_risk_ICF_template_breakdown.json
 *.pdf
 *.docx
 # ICF pipeline output

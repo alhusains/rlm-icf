@@ -58,7 +58,8 @@ def _build_icf_system_prompt(protocol_length: int) -> str:
         "  ft = result_dict.get('filled_template', '')\n"
         "  for m in re.findall(r'{{[^}]+}}|<<[^>]+>>', ft):\n"
         "      issues.append('Unfilled: ' + m)\n"
-        "  for b in ['not found in', 'study documents', 'cannot be found']:\n"
+        "  for b in ['not found in', 'study documents', 'cannot be found',\n"
+        "            'the protocol does not', 'the protocol doesn', 'protocol does not clearly']:\n"
         "      if b in ft.lower(): issues.append('Meta-commentary: ' + b)\n"
         "  if issues:\n"
         "      for iss in issues: print('FIX: ' + iss)\n"
@@ -139,9 +140,11 @@ def _collect_quality_issues(
     Only triggers refinement for issues the RLM can concretely fix:
       1. Unfilled {{...}} or <<...>> markers left in filled_template.
       2. Meta-commentary leaking into patient-facing filled_template.
-      3. LOW confidence (signals uncertain extraction; targeted search may help).
 
     Intentionally NOT triggering for:
+    - LOW confidence alone: second passes do not reliably improve quality and
+      can produce worse output.  Low-confidence results are accepted as-is and
+      surfaced to the reviewer via the confidence annotations.
     - PARTIAL status alone: means the protocol genuinely lacks the info.
       A second pass won't find what isn't there, and just wastes iterations.
     - Quote verification failures: Unicode chars, footnote numbers, and
@@ -159,10 +162,9 @@ def _collect_quality_issues(
     ):
         return []
 
-    # NOT_FOUND with HIGH/MEDIUM confidence: the model searched thoroughly and is sure
-    # the info isn't there. A second pass won't find what doesn't exist.
-    # NOT_FOUND with LOW confidence: the model is uncertain — refinement may help.
-    if result.status == "NOT_FOUND" and result.confidence != "LOW":
+    # NOT_FOUND: the model searched thoroughly and found nothing.
+    # A second pass won't find what doesn't exist.
+    if result.status == "NOT_FOUND":
         return []
 
     # Garbage fallback results are handled by the fresh-RLM retry loop.
@@ -170,9 +172,6 @@ def _collect_quality_issues(
         return []
 
     issues: list[str] = []
-
-    if result.confidence == "LOW":
-        issues.append("confidence is LOW")
 
     unfilled = re.findall(r"\{\{[^}]+\}\}|<<[^>]+>>", result.filled_template)
     for m in unfilled[:3]:

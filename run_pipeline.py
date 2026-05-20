@@ -7,7 +7,7 @@ Example usage:
     # Full pipeline (JSON registry — preferred)
     python run_pipeline.py \\
         --protocol data/Prot_000.pdf \\
-        --registry data/standard_ICF_template_breakdown.json
+        --registry data/UHN_standard_ICF_template_breakdown_new.json
 
     # Legacy CSV registry still works
     python run_pipeline.py \\
@@ -21,13 +21,13 @@ Example usage:
     # Extract specific sections only
     python run_pipeline.py \\
         --protocol data/Prot_000.pdf \\
-        --registry data/standard_ICF_template_breakdown.json \\
+        --registry data/UHN_standard_ICF_template_breakdown_new.json \\
         --sections 2.1 3 6 8
 
     # Verbose RLM output
     python run_pipeline.py \\
         --protocol data/Prot_000.pdf \\
-        --registry data/standard_ICF_template_breakdown.json \\
+        --registry data/UHN_standard_ICF_template_breakdown_new.json \\
         --verbose
 """
 
@@ -35,6 +35,7 @@ import argparse
 import io
 import os
 import sys
+from pathlib import Path
 
 # Fix Windows console encoding for Unicode characters in protocol text
 if sys.stdout.encoding and sys.stdout.encoding.lower().startswith("cp"):
@@ -67,10 +68,21 @@ def main() -> int:
     )
     parser.add_argument(
         "--registry",
-        required=True,
+        default=None,
         help=(
             "Path to the ICF template registry — JSON (preferred) or CSV (legacy). "
+            "If omitted, you will be prompted to choose Standard or Minimal Risk. "
             "Use --convert-registry to produce a JSON from a CSV once."
+        ),
+    )
+    parser.add_argument(
+        "--study-type",
+        choices=["standard", "minimal_risk"],
+        default=None,
+        help=(
+            "Study type used to select the default registry when --registry is not provided. "
+            "  standard     — full ICF template for standard studies. "
+            "  minimal_risk — simplified ICF template for minimal risk studies."
         ),
     )
     parser.add_argument(
@@ -93,12 +105,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.1",
-        help="LLM model name (default: gpt-5.1).",
+        default="gpt-5.4",
+        help="LLM model name (default: gpt-5.4).",
     )
     parser.add_argument(
         "--backend",
-        default="openai",
+        default="azure_openai",
         help=(
             "LLM provider backend (default: openai). "
             "Choices: openai | azure_openai | vllm. "
@@ -285,6 +297,17 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--skip-adaptation",
+        action="store_true",
+        help=(
+            "Skip the adaptation pass (Stage 4). "
+            "The adaptation pass extracts the Introduction and Why-Is-This-Study-Done "
+            "sections first, then uses those results to mark irrelevant optional sections "
+            "as skipped. With this flag all optional sections are attempted regardless. "
+            "Useful for faster single-section runs or debugging."
+        ),
+    )
+    parser.add_argument(
         "--skip-review",
         action="store_true",
         help=(
@@ -302,6 +325,17 @@ def main() -> int:
             "When enabled, HIGH-severity review flags and cross-section terminology "
             "issues are annotated in the report but no automatic fixes are applied. "
             "Implies review still runs (unless --skip-review is also set)."
+        ),
+    )
+    parser.add_argument(
+        "--validation-phase",
+        action="store_true",
+        help=(
+            "Generate a third output document (validation_icf_*.docx) formatted for "
+            "ethics coordinator (EC) review. This document has a clean cover page "
+            "(matching the final ICF) followed by a simplified body: status and "
+            "confidence shown in grey italic, [TO BE FILLED MANUALLY] highlighted "
+            "yellow, no evidence quotes, no review flags."
         ),
     )
 
@@ -323,6 +357,9 @@ def main() -> int:
     # --convert-registry mode: CSV -> JSON, then exit
     # ------------------------------------------------------------------
     if args.convert_registry:
+        if args.registry is None:
+            print("ERROR: --convert-registry requires --registry.", file=sys.stderr)
+            return 1
         src = args.registry
         if not src.lower().endswith(".csv"):
             print(f"ERROR: --convert-registry expects a .csv file, got: {src}", file=sys.stderr)
@@ -337,6 +374,41 @@ def main() -> int:
     if args.protocol is None:
         print("ERROR: --protocol is required when not using --convert-registry.", file=sys.stderr)
         return 1
+
+    # ------------------------------------------------------------------
+    # Resolve registry: explicit path > --study-type flag > interactive prompt
+    # ------------------------------------------------------------------
+    if args.registry is None:
+        _repo_root = Path(__file__).resolve().parent
+        _standard = _repo_root / "data" / "UHN_standard_ICF_template_breakdown_new.json"
+        _minimal = _repo_root / "data" / "minimal_risk_ICF_template_breakdown.json"
+
+        if args.study_type == "standard":
+            args.registry = str(_standard)
+            print("[REGISTRY] Standard ICF template selected.")
+        elif args.study_type == "minimal_risk":
+            args.registry = str(_minimal)
+            print("[REGISTRY] Minimal Risk ICF template selected.")
+        else:
+            print("\nSelect study type:")
+            print("  1. Standard study")
+            print("  2. Minimal risk study")
+            while True:
+                try:
+                    choice = input("Enter 1 or 2: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAborted.", file=sys.stderr)
+                    return 1
+                if choice == "1":
+                    args.registry = str(_standard)
+                    print("[REGISTRY] Standard ICF template selected.")
+                    break
+                elif choice == "2":
+                    args.registry = str(_minimal)
+                    print("[REGISTRY] Minimal Risk ICF template selected.")
+                    break
+                else:
+                    print("Invalid choice. Please enter 1 or 2.")
 
     backend_kwargs: dict = {}
     if args.max_tokens is not None:
@@ -378,6 +450,8 @@ def main() -> int:
         azure_search_semantic_config=args.azure_search_semantic_config,
         skip_review=args.skip_review,
         skip_remediation=args.skip_remediation,
+        skip_adaptation=args.skip_adaptation,
+        validation_phase=args.validation_phase,
     )
 
     result = pipeline.run()

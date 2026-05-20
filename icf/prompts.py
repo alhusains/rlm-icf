@@ -90,7 +90,11 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "  OR (standalone line)    → ALTERNATIVE. Choose exactly ONE of the blocks immediately\n"
         "                            above or below this marker. Do not include both, and do\n"
         "                            not include the word 'OR' itself in the final text.\n"
-        "  • or -                  → BULLET POINT. Both are used interchangeably as list items.\n\n"
+        "  • or -                  → BULLET POINT. Both are used interchangeably as list items.\n"
+        "  | col1 | col2 |        → MARKDOWN TABLE. When the section calls for a schedule or\n"
+        "  |------|------|           procedure table, output it using standard Markdown pipe\n"
+        "  | val  | val  |           syntax. The pipeline renders this as a proper Word table.\n"
+        "                            First row = header. Separator row (|---|---| etc.) required.\n\n"
         "OUTPUT RULE: The filled_template field in your JSON result must contain clean ICF\n"
         "prose — no <<...>>, <...>, {{...}}, or standalone OR lines remaining.\n\n"
     )
@@ -169,7 +173,17 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         '2. DO NOT fabricate information. If not found, set status="NOT_FOUND".\n'
         "3. Every claim must be backed by a verbatim quote from the protocol.\n"
         '4. If only partial info is found, set status="PARTIAL" and note what is missing.\n'
-        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n\n"
+        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n"
+        + (
+            "6. This section is OPTIONAL. After a brief search, if the protocol contains no direct "
+            "evidence that this topic applies to this study, return status=\"NOT_FOUND\" immediately. "
+            "A related or adjacent procedure does NOT count — for example, blood draws are not "
+            "tissue collection. It is correct and expected to return NOT_FOUND for optional sections "
+            "that are genuinely not part of this study.\n"
+            if not var.required
+            else ""
+        )
+        + "\n"
         "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
         + PLAIN_LANGUAGE_SCOPE
         + UHN_PLAIN_LANGUAGE_GUIDELINES
