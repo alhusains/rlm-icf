@@ -1,5 +1,5 @@
 """
-Stage 9 — HIGH Flag Remediation.
+Stage 9 — Review Flag Remediation.
 
 After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
 
@@ -9,9 +9,11 @@ After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
 
   Pass B  One LLM call per affected section to patch the filled_template:
             - addresses all HIGH flags for that section
+            - addresses eligible MEDIUM flags when remediate_medium is enabled
             - applies any applicable GlobalFixRules
           Sections reach the patch step via two routes:
-            1. They contain at least one HIGH-severity ReviewFlag.
+            1. They contain at least one remediable ReviewFlag (HIGH always;
+               MEDIUM only when issue_type is whitelisted or suggested_fix is set).
             2. They appear in the affected_section_ids of a non-note_only rule.
 
   After patching, a programmatic safety check verifies that all literal phrases
@@ -44,9 +46,33 @@ from icf.types import (
 )
 from rlm.clients import get_client
 
+# MEDIUM flags auto-fixed only when issue_type is in this set OR suggested_fix is set.
+# REPETITION, UNCLEAR, TONE at MEDIUM are never auto-fixed (too subjective / risky).
+_MEDIUM_AUTO_FIX_ISSUE_TYPES = frozenset(
+    {
+        "PASSIVE_VOICE",
+        "SENTENCE_TOO_LONG",
+        "PLAIN_LANGUAGE_VIOLATION",
+    }
+)
+
+
+def _is_remediable_medium(flag: ReviewFlag) -> bool:
+    if flag.severity != "MEDIUM":
+        return False
+    if flag.suggested_fix.strip():
+        return True
+    return flag.issue_type in _MEDIUM_AUTO_FIX_ISSUE_TYPES
+
+
+def _is_remediable_flag(flag: ReviewFlag, remediate_medium: bool) -> bool:
+    if flag.severity == "HIGH":
+        return True
+    return remediate_medium and _is_remediable_medium(flag)
+
 
 class RemediationEngine:
-    """Run Stage 9 HIGH-flag remediation over the assembled ICF.
+    """Run Stage 9 review-flag remediation over the assembled ICF.
 
     Reuses the same LLM backend configured for the pipeline.
     """
@@ -58,9 +84,11 @@ class RemediationEngine:
         backend_kwargs: dict | None = None,
         max_retries: int = 2,
         verbose: bool = False,
+        remediate_medium: bool = True,
     ):
         self.max_retries = max_retries
         self.verbose = verbose
+        self.remediate_medium = remediate_medium
 
         kwargs = dict(backend_kwargs or {})
         kwargs["model_name"] = model_name
@@ -99,10 +127,11 @@ class RemediationEngine:
         # where the Stage 8 LLM may have stored IDs with a "SECTION " prefix.
         standard_ids = {v.section_id for v in variables if v.is_standard_text}
 
-        high_flagged_ids: set[str] = {
+        remediable_flagged_ids: set[str] = {
             _normalize_section_id(f.section_id)
             for f in review_result.flags
-            if f.severity == "HIGH" and _normalize_section_id(f.section_id) not in standard_ids
+            if _is_remediable_flag(f, self.remediate_medium)
+            and _normalize_section_id(f.section_id) not in standard_ids
         }
 
         # Sections pulled in by actionable global rules
@@ -113,10 +142,11 @@ class RemediationEngine:
             if sid not in standard_ids
         }
 
-        scope = high_flagged_ids | rule_section_ids
+        scope = remediable_flagged_ids | rule_section_ids
 
         if self.verbose:
-            print(f"[REMEDIATE] Scope: {sorted(scope)} ({len(scope)} section(s))")
+            mode = "HIGH + eligible MEDIUM" if self.remediate_medium else "HIGH only"
+            print(f"[REMEDIATE] Scope ({mode}): {sorted(scope)} ({len(scope)} section(s))")
 
         # -- Pass B: patch each section in scope -------------------------
         patched_extractions = copy.deepcopy(extractions)
@@ -154,12 +184,13 @@ class RemediationEngine:
             if not current_text.strip():
                 continue
 
-            locked_phrases = extract_locked_phrases(var.required_text)
+            locked_phrases = extract_locked_phrases(var.required_text, current_text)
 
-            section_high_flags = [
+            section_flags = [
                 f
                 for f in review_result.flags
-                if _normalize_section_id(f.section_id) == section_id and f.severity == "HIGH"
+                if _normalize_section_id(f.section_id) == section_id
+                and _is_remediable_flag(f, self.remediate_medium)
             ]
             applicable_rules = [r for r in actionable_rules if section_id in r.affected_section_ids]
 
@@ -169,7 +200,7 @@ class RemediationEngine:
                 heading=var.get_display_name(),
                 filled_template=current_text,
                 locked_phrases=locked_phrases,
-                high_flags=section_high_flags,
+                flags=section_flags,
                 applicable_rules=applicable_rules,
             )
 
@@ -177,7 +208,7 @@ class RemediationEngine:
                 records.append(
                     RemediationRecord(
                         section_id=section_id,
-                        high_flag_count=len(section_high_flags),
+                        high_flag_count=len(section_flags),
                         global_rules_applied=[r.description for r in applicable_rules],
                         original_text=original_text,
                         patched_text=original_text,
@@ -194,7 +225,7 @@ class RemediationEngine:
                 records.append(
                     RemediationRecord(
                         section_id=section_id,
-                        high_flag_count=len(section_high_flags),
+                        high_flag_count=len(section_flags),
                         global_rules_applied=[r.description for r in applicable_rules],
                         original_text=original_text,
                         patched_text=original_text,
@@ -216,7 +247,7 @@ class RemediationEngine:
             records.append(
                 RemediationRecord(
                     section_id=section_id,
-                    high_flag_count=len(section_high_flags),
+                    high_flag_count=len(section_flags),
                     global_rules_applied=[r.description for r in applicable_rules],
                     original_text=original_text,
                     patched_text=patched_text,
@@ -289,7 +320,7 @@ class RemediationEngine:
         heading: str,
         filled_template: str,
         locked_phrases: list[str],
-        high_flags: list[ReviewFlag],
+        flags: list[ReviewFlag],
         applicable_rules: list[GlobalFixRule],
     ) -> str | None:
         """Make the patch LLM call for one section. Returns patched text or None."""
@@ -298,7 +329,7 @@ class RemediationEngine:
             heading=heading,
             filled_template=filled_template,
             locked_phrases=locked_phrases,
-            high_flags=high_flags,
+            flags=flags,
             applicable_rules=applicable_rules,
         )
 

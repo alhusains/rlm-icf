@@ -169,7 +169,8 @@ class SectionGroupHarmonizer:
                     continue
 
                 # Safety: locked phrases from required_text must survive.
-                locked = extract_locked_phrases(var.required_text)
+                current_text = target.filled_template or target.answer or ""
+                locked = extract_locked_phrases(var.required_text, current_text)
                 if locked and not _all_phrases_present(revised_text, locked):
                     missing = [p for p in locked if p not in revised_text]
                     preview = "; ".join(f'"{p[:55]}"' for p in missing[:2])
@@ -245,10 +246,7 @@ class SectionGroupHarmonizer:
             if raw:
                 if self.verbose:
                     preview = raw[:500]
-                    print(
-                        f"[HARMONIZE] Raw response "
-                        f"({len(raw)} chars): {preview}"
-                    )
+                    print(f"[HARMONIZE] Raw response ({len(raw)} chars): {preview}")
                 result = _parse_response(raw)
                 if result is not None:
                     return result
@@ -258,9 +256,7 @@ class SectionGroupHarmonizer:
                 )
 
             if attempt < self.max_retries:
-                print(
-                    f"[HARMONIZE] Attempt {attempt}/{self.max_retries} failed. Retrying..."
-                )
+                print(f"[HARMONIZE] Attempt {attempt}/{self.max_retries} failed. Retrying...")
 
         return None
 
@@ -293,11 +289,7 @@ def _parse_response(raw: str) -> list[dict] | None:
 
     def _valid(data) -> list[dict] | None:
         if isinstance(data, list):
-            return [
-                item
-                for item in data
-                if isinstance(item, dict) and "section_id" in item
-            ]
+            return [item for item in data if isinstance(item, dict) and "section_id" in item]
         return None
 
     # Strategy 1

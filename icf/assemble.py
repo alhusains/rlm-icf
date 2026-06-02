@@ -16,6 +16,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
+from icf.clean_icf import _get_study_title, _write_us_summary_page_opening
 from icf.types import (
     ExtractionResult,
     RemediationResult,
@@ -44,6 +45,7 @@ def generate_draft_docx(
     variables: list[TemplateVariable],
     output_path: str,
     review_result: ReviewResult | None = None,
+    us_funded: bool = False,
 ) -> str:
     """Create a new DOCX with all sections, filled content, and markers."""
     doc = Document()
@@ -65,7 +67,13 @@ def generate_draft_docx(
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
     val_map: dict[str, ValidationResult] = {v.section_id: v for v in validations}
 
+    if us_funded:
+        _write_draft_us_summary(doc, variables, ext_map, val_map, review_result)
+        doc.add_page_break()
+
     for var in variables:
+        if var.section_id.startswith("1."):
+            continue
         ext = ext_map.get(var.section_id)
         val = val_map.get(var.section_id)
 
@@ -76,98 +84,7 @@ def generate_draft_docx(
         if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
             continue
 
-        # Section heading
-        level = 2 if var.sub_section else 1
-        heading_text = var.heading
-        if var.sub_section:
-            heading_text += f" - {var.sub_section}"
-        doc.add_heading(heading_text, level=level)
-
-        # Status badge
-        if ext is None:
-            _add_status_line(doc, "NOT PROCESSED", _GREY)
-            continue
-
-        colour = {
-            "FOUND": _GREEN,
-            "PARTIAL": _ORANGE,
-            "STANDARD_TEXT": _GREEN,
-            "NOT_FOUND": _RED,
-            "SKIPPED": _GREY,
-            "ADAPTATION_SKIPPED": _GREY,
-            "ERROR": _RED,
-        }.get(ext.status, _GREY)
-        if ext.status == "ADAPTATION_SKIPPED":
-            # Section was deemed irrelevant for this study — plain skip message only.
-            badge = "Status: SKIPPED — not relevant to this study"
-        else:
-            badge = f"Status: {ext.status}"
-            if ext.confidence and ext.confidence != "N/A":
-                badge += f"  |  Confidence: {ext.confidence}"
-            if ext.error:
-                badge += f"  |  Error: {ext.error}"
-        _add_status_line(doc, badge, colour)
-
-        # Main content
-        if ext.status in ("FOUND", "PARTIAL", "STANDARD_TEXT"):
-            text = ext.filled_template or ext.answer
-            if text:
-                _add_content(doc, text)
-            if ext.status == "PARTIAL" and ext.notes:
-                p = doc.add_paragraph()
-                r = p.add_run(f"[PARTIAL] {ext.notes}")
-                _style_run(r, size=9, colour=_ORANGE, italic=True)
-
-        elif ext.status in ("NOT_FOUND", "SKIPPED"):
-            # Required section could not be filled — flag it prominently.
-            p = doc.add_paragraph()
-            r = p.add_run("[TO BE FILLED MANUALLY]")
-            _style_run(r, size=11, colour=_RED, bold=True)
-            if var.suggested_text:
-                sg = doc.add_paragraph()
-                sr = sg.add_run("Suggested text: " + _plain_suggested_text(var)[:800])
-                _style_run(sr, size=9, colour=_GREY, italic=True)
-
-        elif ext.status == "ERROR":
-            p = doc.add_paragraph()
-            r = p.add_run(f"[EXTRACTION ERROR] {ext.error}")
-            _style_run(r, size=10, colour=_RED, bold=True)
-
-        # Evidence citations
-        if ext.evidence:
-            ep = doc.add_paragraph()
-            er = ep.add_run("Evidence:")
-            _style_run(er, size=8, italic=True, colour=_GREY)
-            for ev in ext.evidence:
-                bp = doc.add_paragraph(style="List Bullet")
-                short_quote = ev.quote[:250].replace("\n", " ")
-                br = bp.add_run(f'Page {ev.page}: "{short_quote}"')
-                _style_run(br, size=8, italic=True, colour=_GREY)
-
-        # Validation issues
-        if val and val.issues:
-            for issue in val.issues:
-                ip = doc.add_paragraph()
-                ir = ip.add_run(f"[VALIDATION] {issue}")
-                _style_run(ir, size=8, colour=_ORANGE)
-
-        # Inline review annotations
-        if review_result:
-            section_flags = [f for f in review_result.flags if f.section_id == var.section_id]
-            for flag in section_flags:
-                flag_colour = {"HIGH": _RED, "MEDIUM": _ORANGE, "LOW": _GREY}.get(
-                    flag.severity, _GREY
-                )
-                fp = doc.add_paragraph()
-                fr = fp.add_run(
-                    f"[REVIEW | {flag.issue_type} | {flag.severity}] "
-                    f'"{flag.flagged_text[:120]}" — {flag.suggestion}'
-                )
-                _style_run(fr, size=8, colour=flag_colour, italic=True)
-                if flag.suggested_fix:
-                    sfp = doc.add_paragraph()
-                    sfr = sfp.add_run(f"    Suggested fix: {flag.suggested_fix}")
-                    _style_run(sfr, size=8, colour=flag_colour)
+        _write_draft_section(doc, var, ext, val, review_result)
 
     # Review appendix
     if review_result and (review_result.flags or review_result.cross_section_notes):
@@ -226,6 +143,137 @@ def generate_report_json(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     return output_path
+
+
+# ------------------------------------------------------------------
+# US-funded summary (sections 1.x)
+# ------------------------------------------------------------------
+
+
+def _write_draft_us_summary(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+    val_map: dict[str, ValidationResult],
+    review_result: ReviewResult | None,
+) -> None:
+    """Draft annotated Summary of ICF block — same layout as clean/validation docs."""
+    _write_us_summary_page_opening(doc, ext_map)
+
+    summary_vars = [v for v in variables if v.section_id.startswith("1.")]
+    for var in summary_vars:
+        _write_draft_section(
+            doc,
+            var,
+            ext_map.get(var.section_id),
+            val_map.get(var.section_id),
+            review_result,
+            include_heading=False,
+        )
+
+
+def _write_draft_section(
+    doc: Document,
+    var: TemplateVariable,
+    ext: ExtractionResult | None,
+    val: ValidationResult | None,
+    review_result: ReviewResult | None,
+    *,
+    include_heading: bool = True,
+) -> None:
+    """Render one section in the draft ICF (shared by main body and US summary)."""
+    if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
+        return
+
+    if include_heading:
+        level = 2 if var.sub_section else 1
+        heading_text = var.heading
+        if var.sub_section:
+            heading_text += f" - {var.sub_section}"
+        doc.add_heading(heading_text, level=level)
+    elif var.section_id != "1.1" and var.sub_section:
+        p = doc.add_paragraph()
+        r = p.add_run(var.sub_section)
+        _style_run(r, size=11, bold=True)
+
+    if ext is None:
+        _add_status_line(doc, "NOT PROCESSED", _GREY)
+        return
+
+    colour = {
+        "FOUND": _GREEN,
+        "PARTIAL": _ORANGE,
+        "STANDARD_TEXT": _GREEN,
+        "NOT_FOUND": _RED,
+        "SKIPPED": _GREY,
+        "ADAPTATION_SKIPPED": _GREY,
+        "ERROR": _RED,
+    }.get(ext.status, _GREY)
+    if ext.status == "ADAPTATION_SKIPPED":
+        badge = "Status: SKIPPED — not relevant to this study"
+    else:
+        badge = f"Status: {ext.status}"
+        if ext.confidence and ext.confidence != "N/A":
+            badge += f"  |  Confidence: {ext.confidence}"
+        if ext.error:
+            badge += f"  |  Error: {ext.error}"
+    _add_status_line(doc, badge, colour)
+
+    if ext.status in ("FOUND", "PARTIAL", "STANDARD_TEXT"):
+        text = ext.filled_template or ext.answer
+        if text:
+            _add_content(doc, text)
+        if ext.status == "PARTIAL" and ext.notes:
+            p = doc.add_paragraph()
+            r = p.add_run(f"[PARTIAL] {ext.notes}")
+            _style_run(r, size=9, colour=_ORANGE, italic=True)
+
+    elif ext.status in ("NOT_FOUND", "SKIPPED"):
+        p = doc.add_paragraph()
+        r = p.add_run("[TO BE FILLED MANUALLY]")
+        _style_run(r, size=11, colour=_RED, bold=True)
+        if var.suggested_text:
+            sg = doc.add_paragraph()
+            sr = sg.add_run("Suggested text: " + _plain_suggested_text(var)[:800])
+            _style_run(sr, size=9, colour=_GREY, italic=True)
+
+    elif ext.status == "ERROR":
+        p = doc.add_paragraph()
+        r = p.add_run(f"[EXTRACTION ERROR] {ext.error}")
+        _style_run(r, size=10, colour=_RED, bold=True)
+
+    if ext.evidence:
+        ep = doc.add_paragraph()
+        er = ep.add_run("Evidence:")
+        _style_run(er, size=8, italic=True, colour=_GREY)
+        for ev in ext.evidence:
+            bp = doc.add_paragraph(style="List Bullet")
+            short_quote = ev.quote[:250].replace("\n", " ")
+            br = bp.add_run(f'Page {ev.page}: "{short_quote}"')
+            _style_run(br, size=8, italic=True, colour=_GREY)
+
+    if val and val.issues:
+        for issue in val.issues:
+            ip = doc.add_paragraph()
+            ir = ip.add_run(f"[VALIDATION] {issue}")
+            _style_run(ir, size=8, colour=_ORANGE)
+
+    if review_result:
+        section_flags = [f for f in review_result.flags if f.section_id == var.section_id]
+        for flag in section_flags:
+            flag_colour = {"HIGH": _RED, "MEDIUM": _ORANGE, "LOW": _GREY}.get(
+                flag.severity, _GREY
+            )
+            fp = doc.add_paragraph()
+            fr = fp.add_run(
+                f"[REVIEW | {flag.issue_type} | {flag.severity}] "
+                f'"{flag.flagged_text[:120]}" — {flag.suggestion}'
+            )
+            _style_run(fr, size=8, colour=flag_colour, italic=True)
+            if flag.suggested_fix:
+                sfp = doc.add_paragraph()
+                sfr = sfp.add_run(f"    Suggested fix: {flag.suggested_fix}")
+                _style_run(sfr, size=8, colour=flag_colour)
 
 
 # ------------------------------------------------------------------

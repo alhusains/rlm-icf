@@ -20,6 +20,11 @@ import os
 import time
 
 from icf.adapt import ADAPTATION_TRIGGER_IDS, build_adapted_registry
+from icf.runtime_injections import (
+    StudyRuntimeFlags,
+    apply_post_adaptation_injections,
+    apply_pre_extraction_injections,
+)
 from icf.assemble import generate_draft_docx, generate_report_json
 from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
 from icf.debug_logger import ICFDebugLogger
@@ -27,6 +32,7 @@ from icf.extract import ExtractionEngine
 from icf.harmonize import SectionGroupHarmonizer
 from icf.ingest import load_protocol
 from icf.registry import load_template_registry
+from icf.remediate import RemediationEngine, _is_remediable_flag, _is_remediable_medium
 from icf.types import (
     ExtractionResult,
     PipelineResult,
@@ -84,9 +90,12 @@ class ICFPipeline:
         azure_search_semantic_config: str | None = None,
         skip_review: bool = False,
         skip_remediation: bool = False,
+        remediate_high_only: bool = False,
         skip_adaptation: bool = False,
         skip_harmonize: bool = False,
         validation_phase: bool = False,
+        us_funded: bool = False,
+        sdm: bool = False,
     ):
         if extraction_backend not in _VALID_EXTRACTION_BACKENDS:
             raise ValueError(
@@ -120,9 +129,13 @@ class ICFPipeline:
         self.azure_search_semantic_config = azure_search_semantic_config
         self.skip_review = skip_review
         self.skip_remediation = skip_remediation
+        self.remediate_high_only = remediate_high_only
         self.skip_adaptation = skip_adaptation
         self.skip_harmonize = skip_harmonize
         self.validation_phase = validation_phase
+        self.us_funded = us_funded
+        self.sdm = sdm
+        self._runtime_flags = StudyRuntimeFlags(us_funded=us_funded, sdm=sdm)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -148,6 +161,19 @@ class ICFPipeline:
         else:
             variables = all_variables
 
+        if self._runtime_flags.sdm:
+            print("[REGISTRY] SDM form: substitute decision maker introduction enabled.")
+        if self._runtime_flags.us_funded:
+            print("[REGISTRY] US-funded study: including Summary of ICF sections (1.x).")
+        else:
+            n_summary = sum(1 for v in variables if v.section_id.startswith("1."))
+            if n_summary:
+                variables = [v for v in variables if not v.section_id.startswith("1.")]
+                print(
+                    f"[REGISTRY] Omitting {n_summary} US-funded summary section(s) "
+                    "(pass --us-funded to include)."
+                )
+
         extractable = [v for v in variables if v.is_in_protocol or v.partially_in_protocol]
         standard = [v for v in variables if v.is_standard_text]
         skippable = [
@@ -160,6 +186,9 @@ class ICFPipeline:
             f"{len(standard)} standard text, "
             f"{len(skippable)} will be skipped (not in protocol)."
         )
+
+        for msg in apply_pre_extraction_injections(variables, self._runtime_flags):
+            print(f"[REGISTRY] {msg}")
 
         # -- Stage 3+4+5: Two-phase extract with adaptation ------------------
         debug_logger: ICFDebugLogger | None = None
@@ -223,6 +252,11 @@ class ICFPipeline:
             else:
                 adapted_non_trigger = non_trigger_vars
 
+            for msg in apply_post_adaptation_injections(
+                adapted_non_trigger, self._runtime_flags
+            ):
+                print(f"[REGISTRY] {msg}")
+
             # Merge adaptations back so all_variables stays intact for the DOCX
             adapted_map: dict[str, TemplateVariable] = {v.section_id: v for v in trigger_vars}
             adapted_map.update({v.section_id: v for v in adapted_non_trigger})
@@ -283,7 +317,9 @@ class ICFPipeline:
         os.makedirs(self.output_dir, exist_ok=True)
 
         elapsed = time.time() - wall_start
-        summary = self._build_summary(extractions, validations, elapsed)
+        summary = self._build_summary(
+            extractions, validations, elapsed, self._runtime_flags
+        )
 
         stem = self._output_stem()
         docx_path = os.path.join(self.output_dir, f"draft_icf_{stem}.docx")
@@ -321,23 +357,30 @@ class ICFPipeline:
             print("\n[REVIEW] Skipped (--skip-review).")
             summary["review_flags"] = 0
 
-        # -- Stage 9: Remediation (HIGH flag fixes + cross-section rules) ----
+        # -- Stage 9: Remediation (review flag fixes + cross-section rules) ----
         remediation_result: RemediationResult | None = None
         if not self.skip_review and not self.skip_remediation and review_result:
+            remediate_medium = not self.remediate_high_only
             high_count = sum(1 for f in review_result.flags if f.severity == "HIGH")
+            medium_count = sum(
+                1 for f in review_result.flags if remediate_medium and _is_remediable_medium(f)
+            )
+            remediable_count = sum(
+                1 for f in review_result.flags if _is_remediable_flag(f, remediate_medium)
+            )
             has_notes = bool(review_result.cross_section_notes.strip())
-            if high_count > 0 or has_notes:
-                from icf.remediate import RemediationEngine
-
+            if remediable_count > 0 or has_notes:
                 print(
                     f"\n[REMEDIATE] Running Stage 9 remediation "
-                    f"({high_count} HIGH flag(s), cross-section notes: {bool(has_notes)}) ..."
+                    f"({high_count} HIGH, {medium_count} eligible MEDIUM flag(s), "
+                    f"cross-section notes: {bool(has_notes)}) ..."
                 )
                 remediator = RemediationEngine(
                     model_name=self.model_name,
                     backend=self.backend,
                     backend_kwargs=self.backend_kwargs,
                     verbose=self.verbose,
+                    remediate_medium=remediate_medium,
                 )
                 extractions, remediation_result = remediator.run_remediation(
                     extractions, final_variables, review_result
@@ -351,14 +394,21 @@ class ICFPipeline:
                         f"{remediation_result.unaddressed_notes[:200]}"
                     )
             else:
-                print("\n[REMEDIATE] No HIGH flags or cross-section notes — skipping.")
+                print("\n[REMEDIATE] No remediable flags or cross-section notes — skipping.")
         else:
             if self.skip_remediation:
                 print("\n[REMEDIATE] Skipped (--skip-remediation).")
 
         # -- Write outputs (now that review_result and remediation are available) --
         print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
-        generate_draft_docx(extractions, validations, final_variables, docx_path, review_result)
+        generate_draft_docx(
+            extractions,
+            validations,
+            final_variables,
+            docx_path,
+            review_result,
+            us_funded=self.us_funded,
+        )
 
         print(f"[ASSEMBLE] Writing report    -> {json_path}")
         generate_report_json(
@@ -375,6 +425,8 @@ class ICFPipeline:
             variables=final_variables,
             output_path=clean_docx_path,
             logo_path=logo_path,
+            us_funded=self.us_funded,
+            sdm=self.sdm,
         )
 
         validation_path_out: str | None = None
@@ -385,6 +437,8 @@ class ICFPipeline:
                 variables=final_variables,
                 output_path=validation_docx_path,
                 logo_path=logo_path,
+                us_funded=self.us_funded,
+                sdm=self.sdm,
             )
             validation_path_out = validation_docx_path
 
@@ -555,6 +609,7 @@ class ICFPipeline:
         extractions: list[ExtractionResult],
         validations: list[ValidationResult],
         elapsed: float,
+        runtime_flags: StudyRuntimeFlags,
     ) -> dict:
         total = len(extractions)
         counts: dict[str, int] = {
@@ -570,6 +625,8 @@ class ICFPipeline:
             counts[e.status] = counts.get(e.status, 0) + 1
 
         return {
+            "us_funded": runtime_flags.us_funded,
+            "sdm": runtime_flags.sdm,
             "total_sections": total,
             "found": counts["FOUND"],
             "partial": counts["PARTIAL"],

@@ -23,9 +23,9 @@ PLAIN LANGUAGE — WHERE TO APPLY THE GUIDELINES:
 UHN_PLAIN_LANGUAGE_GUIDELINES = """\
 
 Vocabulary and Word Choice
-- Use short, familiar, and everyday words instead of long academic terms.
-- Use simple alternatives: e.g. "high blood pressure" instead of "hypertension",
-  "doctor" instead of "physician", "throwing up" instead of "vomiting".
+- Use short, familiar, and everyday words instead of long academic terms. The language should be at a grade 6 reading level.
+- Use simple alternatives for medical jargon: e.g. "high blood pressure" instead of "hypertension",
+  "doctor" instead of "physician", "throwing up" instead of "vomiting". This is very important.
 - Explain abstract medical concepts using concrete examples, stories, or analogies.
 - If a medical term is strictly required, explain what it means in plain language
   immediately after (e.g. "hypertension (high blood pressure)").

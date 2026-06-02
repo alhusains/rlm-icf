@@ -61,6 +61,8 @@ def generate_clean_icf_docx(
     variables: list[TemplateVariable],
     output_path: str,
     logo_path: str | None = None,
+    us_funded: bool = False,
+    sdm: bool = False,
 ) -> str:
     """Generate a clean, publication-quality ICF DOCX.
 
@@ -82,9 +84,11 @@ def generate_clean_icf_docx(
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
 
     _write_intro_page(doc)
+    if us_funded:
+        _write_us_summary_sections(doc, variables, ext_map)
     _write_cover_page(doc, variables, ext_map)
-    _write_body_sections(doc, variables, ext_map)
-    _write_signature_pages(doc, _get_study_title(ext_map))
+    _write_main_icf_body(doc, variables, ext_map)
+    _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm)
 
     doc.save(output_path)
     return output_path
@@ -95,6 +99,8 @@ def generate_validation_docx(
     variables: list[TemplateVariable],
     output_path: str,
     logo_path: str | None = None,
+    us_funded: bool = False,
+    sdm: bool = False,
 ) -> str:
     """Generate a validation-phase ICF for ethics coordinator (EC) review.
 
@@ -118,9 +124,11 @@ def generate_validation_docx(
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
 
     _write_validation_intro_page(doc)
+    if us_funded:
+        _write_us_summary_sections_validation(doc, variables, ext_map)
     _write_cover_page(doc, variables, ext_map)
-    _write_validation_body(doc, variables, ext_map)
-    _write_signature_pages(doc, _get_study_title(ext_map))
+    _write_validation_main_body(doc, variables, ext_map)
+    _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm)
 
     doc.save(output_path)
     return output_path
@@ -567,6 +575,172 @@ def _intro_body(doc: Document, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# US-funded Summary of Informed Consent Form (sections 1.x)
+# ---------------------------------------------------------------------------
+
+_US_SUMMARY_PAGE_TITLE = "Summary of Informed Consent Form"
+
+
+def _write_us_summary_page_opening(doc: Document, ext_map: dict[str, ExtractionResult]) -> None:
+    """Page title (centered, underlined) and study title line (left, bold label)."""
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(10)
+    r = p.add_run(_US_SUMMARY_PAGE_TITLE)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+    r.bold = False
+    r.underline = True
+
+    study_title = _get_study_title(ext_map)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(8)
+    rl = p.add_run("Study Title: ")
+    rl.font.name = _FONT
+    rl.font.size = Pt(_BODY_PT)
+    rl.bold = True
+    rv = p.add_run(study_title)
+    rv.font.name = _FONT
+    rv.font.size = Pt(_BODY_PT)
+    rv.bold = False
+
+
+def _write_us_summary_sections(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+) -> None:
+    """Write the Summary of ICF block (sections 1.x) for US-funded studies."""
+    _write_us_summary_page_opening(doc, ext_map)
+    _write_us_summary_section_blocks(doc, variables, ext_map, validation=False)
+    doc.add_page_break()
+
+
+def _write_us_summary_sections_validation(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+) -> None:
+    """US-funded summary block for the validation-phase ICF."""
+    _write_us_summary_page_opening(doc, ext_map)
+    _write_us_summary_section_blocks(doc, variables, ext_map, validation=True)
+    doc.add_page_break()
+
+
+def _write_us_summary_section_blocks(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+    *,
+    validation: bool,
+) -> None:
+    """Write 1.1 body only (no extra heading), then 1.2–1.7 with sub-section headings."""
+    summary_vars = [v for v in variables if v.section_id.startswith("1.")]
+    var_11 = next((v for v in summary_vars if v.section_id == "1.1"), None)
+    rest_vars = [v for v in summary_vars if v.section_id != "1.1"]
+
+    if var_11 is not None:
+        ext = ext_map.get("1.1")
+        if validation:
+            _write_us_summary_1_1_validation(doc, var_11, ext)
+        else:
+            _write_us_summary_1_1_clean(doc, var_11, ext)
+
+    last_sub_section: str | None = None
+    for var in rest_vars:
+        ext = ext_map.get(var.section_id)
+
+        if ext and ext.status == "ADAPTATION_SKIPPED":
+            continue
+
+        content = _get_section_content(ext)
+        if not content and not var.required:
+            continue
+
+        confidence = ext.confidence if ext else None
+        color = None if validation else _CONFIDENCE_COLORS.get(confidence or "", None)
+
+        if var.sub_section and var.sub_section != last_sub_section:
+            _add_subsection_heading(doc, var.sub_section, color=color)
+            last_sub_section = var.sub_section
+        elif not var.sub_section:
+            last_sub_section = None
+
+        if validation:
+            if ext is not None and ext.status in (
+                "FOUND",
+                "PARTIAL",
+                "NOT_FOUND",
+                "ERROR",
+                "SKIPPED",
+            ):
+                _add_validation_annotation(doc, ext)
+            if content:
+                _add_content_block(doc, content, color=None, highlight_markers=True)
+                if ext is not None and ext.status == "PARTIAL" and ext.notes:
+                    _add_partial_notes(doc, ext.notes)
+            else:
+                _add_validation_placeholder(doc, ext, var, optional=not var.required)
+        elif content:
+            _add_content_block(doc, content, color=color)
+        else:
+            _add_placeholder(doc, ext, var)
+
+
+def _write_us_summary_1_1_clean(
+    doc: Document,
+    var: TemplateVariable,
+    ext: ExtractionResult | None,
+) -> None:
+    """Section 1.1 intro text only — no duplicate heading."""
+    if ext and ext.status == "ADAPTATION_SKIPPED":
+        return
+
+    content = _get_section_content(ext)
+    if not content and not var.required:
+        return
+
+    color = _CONFIDENCE_COLORS.get(ext.confidence if ext else "", None)
+    if content:
+        _add_content_block(doc, content, color=color)
+    else:
+        _add_placeholder(doc, ext, var)
+
+
+def _write_us_summary_1_1_validation(
+    doc: Document,
+    var: TemplateVariable,
+    ext: ExtractionResult | None,
+) -> None:
+    """Section 1.1 for validation ICF — content only, no heading."""
+    if ext and ext.status == "ADAPTATION_SKIPPED":
+        return
+
+    content = _get_section_content(ext)
+    if not content and not var.required:
+        return
+
+    if ext is not None and ext.status in (
+        "FOUND",
+        "PARTIAL",
+        "NOT_FOUND",
+        "ERROR",
+        "SKIPPED",
+    ):
+        _add_validation_annotation(doc, ext)
+
+    if content:
+        _add_content_block(doc, content, color=None, highlight_markers=True)
+        if ext is not None and ext.status == "PARTIAL" and ext.notes:
+            _add_partial_notes(doc, ext.notes)
+    else:
+        _add_validation_placeholder(doc, ext, var, optional=not var.required)
+
+
+# ---------------------------------------------------------------------------
 # Cover page (sections 2.x)
 # ---------------------------------------------------------------------------
 
@@ -627,17 +801,29 @@ def _write_cover_page(
 # ---------------------------------------------------------------------------
 
 
+def _write_main_icf_body(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+) -> None:
+    body_vars = [
+        v
+        for v in variables
+        if not v.section_id.startswith("2.") and not v.section_id.startswith("1.")
+    ]
+    _write_body_sections(doc, body_vars, ext_map)
+
+
 def _write_body_sections(
     doc: Document,
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
 ) -> None:
+    """Write grouped ICF body sections (headings, sub-sections, content)."""
     last_heading: str | None = None
-    last_sub_section: str | None = None  # sentinel so first sub is always written
+    last_sub_section: str | None = None
 
-    body_vars = [v for v in variables if not v.section_id.startswith("2.")]
-
-    for var in body_vars:
+    for var in variables:
         ext = ext_map.get(var.section_id)
 
         # Adaptation-skipped sections are fully irrelevant — omit entirely.
@@ -759,25 +945,29 @@ def _add_validation_placeholder(
         r2.font.color.rgb = _ANNOTATION_GREY
 
 
+def _write_validation_main_body(
+    doc: Document,
+    variables: list[TemplateVariable],
+    ext_map: dict[str, ExtractionResult],
+) -> None:
+    body_vars = [
+        v
+        for v in variables
+        if not v.section_id.startswith("2.") and not v.section_id.startswith("1.")
+    ]
+    _write_validation_body(doc, body_vars, ext_map)
+
+
 def _write_validation_body(
     doc: Document,
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
 ) -> None:
-    """Write body sections for the validation-phase ICF.
-
-    Same grouping / heading logic as ``_write_body_sections`` but:
-    - No confidence-based colour — everything is black.
-    - Status + confidence annotation rendered in small italic grey below each heading.
-    - ``[TO BE FILLED MANUALLY]`` with yellow highlight for unfilled sections.
-    - No evidence quotes, no review flags.
-    """
+    """Write body sections for the validation-phase ICF."""
     last_heading: str | None = None
     last_sub_section: str | None = None
 
-    body_vars = [v for v in variables if not v.section_id.startswith("2.")]
-
-    for var in body_vars:
+    for var in variables:
         ext = ext_map.get(var.section_id)
 
         if ext and ext.status == "ADAPTATION_SKIPPED":
@@ -838,7 +1028,7 @@ def _write_validation_body(
 # ---------------------------------------------------------------------------
 
 
-def _write_signature_pages(doc: Document, study_title: str) -> None:
+def _write_signature_pages(doc: Document, study_title: str, *, sdm: bool = False) -> None:
     doc.add_page_break()
 
     # TITLE line: "TITLE:" (plain) + " [title]" (bold) — matches approved ICF
@@ -859,12 +1049,18 @@ def _write_signature_pages(doc: Document, study_title: str) -> None:
     _run(p, "CONSENT")
 
     # Consent bullet items — explicit bullet character + hanging indent
+    agree_item = (
+        "I agree, or agree to allow the person I am responsible for, to take part in "
+        "this study."
+        if sdm
+        else "I agree to take part in this study."
+    )
     _consent_items = [
         "All of my questions have been answered",
         "I allow access to medical records and related personal health information "
         "as explained in this consent form",
         "I do not give up any legal rights by signing this consent form,",
-        "I agree to take part in this study.",
+        agree_item,
     ]
     for item in _consent_items:
         p = doc.add_paragraph()
@@ -882,6 +1078,9 @@ def _write_signature_pages(doc: Document, study_title: str) -> None:
     _sig_underlines(doc)
     _sig_label(doc, "Signature of Participant/\tPRINTED NAME\tDate")
     _body_line(doc, "Substitute Decision-Maker")
+
+    if sdm:
+        _sig_sdm_participant_printed_name_row(doc)
 
     for _ in range(4):
         _add_blank(doc)
@@ -1250,6 +1449,21 @@ def _apply_sig_tab_stops(para) -> None:
     pPr.append(tabs)
 
 
+def _sig_sdm_participant_printed_name_row(doc: Document) -> None:
+    """SDM-only row: prompt on the left, participant printed-name line in the middle column."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(0)
+    _apply_sig_tab_stops(p)
+    _run(p, "If consent is provided by Substitute Decision Maker:\t")
+    _run(p, "______________________")
+    p2 = doc.add_paragraph()
+    p2.paragraph_format.space_before = Pt(0)
+    p2.paragraph_format.space_after = Pt(0)
+    _apply_sig_tab_stops(p2)
+    _run(p2, "\tPRINTED NAME of Participant\t")
+
+
 def _sig_underlines(doc: Document) -> None:
     """Standard three-column signature underline row with aligned tab stops."""
     p = doc.add_paragraph()
@@ -1321,5 +1535,8 @@ def _get_study_title(ext_map: dict[str, ExtractionResult]) -> str:
     """Return the study title from section 2.1, or a placeholder if not found."""
     ext = ext_map.get("2.1")
     if ext and ext.status in _CONTENT_STATUSES:
-        return (ext.filled_template or ext.answer or "").strip() or "[Study Title]"
+        raw = (ext.filled_template or ext.answer or "").strip()
+        if raw:
+            return _strip_label_prefix(raw, "Study Title:")
+        return "[Study Title]"
     return "[Study Title]"
