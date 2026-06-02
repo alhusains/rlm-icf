@@ -24,6 +24,7 @@ from __future__ import annotations
 from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
 from icf.rag_index import Chunk
 from icf.types import TemplateVariable
+from icf.runtime_injections import prompt_runtime_context
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -38,7 +39,10 @@ RAG_SYSTEM_PROMPT = (
     "  2. Identify relevant information and note its source (page number).\n"
     "  3. Return a JSON object: start with your reasoning, then the extraction fields.\n\n"
     "Core rules:\n"
-    "  • 'filled_template' is READ BY PATIENTS. It must contain ONLY: required ICF wording "
+    "  • 'filled_template' is READ BY THE STUDY PARTICIPANT. The participant may be a patient, "
+    "a clinician, a healthy volunteer, a caregiver, or any other person the study is enrolling "
+    "— the protocol defines who. Write for whoever the protocol says is being recruited. "
+    "It must contain ONLY: required ICF wording "
     "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
     "missing fields. NEVER include sentences about what was or wasn't found, references to "
     "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
@@ -83,8 +87,8 @@ _JSON_SCHEMA_TEMPLATE = """{
     "reasoning": "Step-by-step analysis: reference specific retrieved passages by their [Page X] label, note what information each passage provides, explain how you resolved conditional template blocks (<<...>>, <...>, OR alternatives), and justify your status and confidence choices.",
     "section_id": "{section_id}",
     "status": "FOUND" | "PARTIAL" | "NOT_FOUND",
-    "answer": "Extracted information following UHN Plain Language Guidelines (patient-facing).",
-    "filled_template": "PATIENT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the retrieved passages, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
+    "answer": "Extracted information following UHN Plain Language Guidelines (participant-facing).",
+    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the retrieved passages, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
     "evidence": [
         {"quote": "Exact verbatim quote from one of the retrieved passages", "page": "Page number from [Pages X-Y] label", "section": "Protocol section if identifiable"}
     ],
@@ -168,10 +172,17 @@ def build_rag_extraction_task(var: TemplateVariable) -> str:
         f"=== EXTRACTION TASK: ICF Section [{var.section_id}] ===\n",
         f"TARGET: {var.heading}{sub}",
         f"WHAT TO EXTRACT: {var.instructions}\n",
-        f"AVAILABILITY: {availability}",
-        f"IMPORTANCE: {importance}\n",
-        _SYMBOL_GUIDE,
     ]
+    runtime_ctx = prompt_runtime_context(var)
+    if runtime_ctx:
+        lines.append(runtime_ctx.rstrip())
+    lines.extend(
+        [
+            f"AVAILABILITY: {availability}",
+            f"IMPORTANCE: {importance}\n",
+            _SYMBOL_GUIDE,
+        ]
+    )
 
     if var.required_text:
         lines.append(

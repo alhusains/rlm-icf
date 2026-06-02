@@ -9,6 +9,7 @@ BM25 + dense embeddings.
 from __future__ import annotations
 
 from icf.types import TemplateVariable
+from icf.runtime_injections import prompt_runtime_context
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -151,10 +152,17 @@ def build_azure_search_messages(
         f"=== EXTRACTION TASK: ICF Section [{var.section_id}] ===\n",
         f"TARGET: {var.heading}{sub}",
         f"WHAT TO EXTRACT: {var.instructions}\n",
-        f"AVAILABILITY: {availability}",
-        f"IMPORTANCE: {importance}\n",
-        _SYMBOL_GUIDE,
     ]
+    runtime_ctx = prompt_runtime_context(var)
+    if runtime_ctx:
+        task_lines.append(runtime_ctx.rstrip())
+    task_lines.extend(
+        [
+            f"AVAILABILITY: {availability}",
+            f"IMPORTANCE: {importance}\n",
+            _SYMBOL_GUIDE,
+        ]
+    )
 
     if var.required_text:
         task_lines.append(

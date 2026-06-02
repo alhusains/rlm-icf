@@ -39,11 +39,28 @@ REVIEW_SYSTEM_PROMPT = (
     "Do NOT generate any flags for those sections regardless of reading level or style.\n"
     "  4. The 'flagged_text' must be a short verbatim excerpt (≤ 30 words) copied exactly from "
     "the section content shown to you.\n"
-    "  5. Focus on issues that a patient reading this form would actually notice: unclear "
+    "  5. Focus on issues that the participant reading this form would actually notice: unclear "
     "language, unexplained jargon, passive voice, very long sentences, repeated information "
-    "across sections, inconsistent terminology, or an unwelcoming tone.\n"
-    "  6. Severity guide: HIGH = likely confuses or misleads the patient; "
+    "across sections, inconsistent terminology, or an unwelcoming tone. Note: the participant "
+    "may be a patient, a clinician, a healthy volunteer, a caregiver, or another research subject "
+    "— calibrate your expectations for technical language accordingly.\n"
+    "  6. Severity guide: HIGH = likely confuses or misleads the participant; "
     "MEDIUM = noticeable problem but meaning is still clear; LOW = minor style issue.\n"
+    "  7. suggested_fix: Provide a ready-to-copy plain-language replacement whenever "
+    "the fix is local to the flagged excerpt. This field powers automated remediation — "
+    "empty suggested_fix means the issue will likely stay in the draft.\n"
+    "     • REQUIRED (non-empty) for HIGH and MEDIUM flags of types PLAIN_LANGUAGE_VIOLATION, "
+    "PASSIVE_VOICE, SENTENCE_TOO_LONG, UNCLEAR, and TONE when a single excerpt can be "
+    "rewritten without changing facts or crossing sections.\n"
+    "     • REQUIRED for unexplained medical jargon, technical procedure names, dosing "
+    "units, and formal words (e.g. 'inform', 'utilize') — give the simplified phrase "
+    "participants should read.\n"
+    "     • Leave empty ONLY when: (a) the issue is REPETITION or TERMINOLOGY_INCONSISTENCY "
+    "that must be fixed consistently across multiple sections, (b) the span is legally "
+    "mandated verbatim text you were told not to flag, or (c) no single excerpt replacement "
+    "can fix the problem without omitting required facts.\n"
+    "     • suggested_fix must replace only the flagged_text span (same facts, plainer words); "
+    "the suggestion field stays brief guidance, not the replacement itself.\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -143,10 +160,12 @@ def build_review_messages(
         'TERMINOLOGY_INCONSISTENCY | UNCLEAR | TONE | PLAIN_LANGUAGE_VIOLATION",\n'
         '      "suggestion": "brief explanation of the issue",\n'
         '      "severity": "HIGH | MEDIUM | LOW",\n'
-        '      "suggested_fix": "A ready-to-copy replacement for the flagged text, '
-        'written following the plain language guidelines. Leave as an empty string '
-        'if the fix requires changes across multiple sections or the issue is structural '
-        '(e.g. REPETITION spanning two sections)."\n'
+        '      "suggested_fix": "Ready-to-copy plain-language replacement for flagged_text '
+        'only (Grade 6–8, active voice, short sentences). REQUIRED for HIGH/MEDIUM '
+        'PLAIN_LANGUAGE_VIOLATION, PASSIVE_VOICE, SENTENCE_TOO_LONG, UNCLEAR, and TONE '
+        'when the fix fits in one excerpt. REQUIRED for jargon and unexplained technical '
+        'terms — define or simplify in place. Empty string ONLY for cross-section '
+        'REPETITION/TERMINOLOGY_INCONSISTENCY or when no local rewrite is possible."\n'
         "    }\n"
         "  ],\n"
         '  "cross_section_notes": "Overall observations about terminology consistency, '
