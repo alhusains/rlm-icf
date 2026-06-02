@@ -149,7 +149,7 @@ def build_harmonization_prompt(
         "[\n"
         "  {\n"
         '    "section_id": "12.1",\n'
-        '    "revised_text": "The complete revised patient-facing text for this sub-section.",\n'
+        '    "revised_text": "The complete revised participant-facing text for this sub-section.",\n'
         '    "notes": "One sentence describing what was changed (e.g., moved blood draw details here from 12.2)."\n'
         "  }\n"
         "]"

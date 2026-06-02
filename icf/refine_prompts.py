@@ -17,6 +17,7 @@ say "result_dict is already in scope — modify it to fix the issues below."
 import json
 
 from icf.types import ExtractionResult, TemplateVariable
+from icf.runtime_injections import prompt_runtime_context
 
 
 def build_refinement_setup_code(first_result: ExtractionResult) -> str:
@@ -60,10 +61,10 @@ def build_refinement_prompt(
         "{\n"
         f'    "section_id": "{var.section_id}",\n'
         '    "status": "FOUND" | "NOT_FOUND" | "PARTIAL",\n'
-        '    "filled_template": "Clean patient-facing ICF text — no {{...}}, <<...>>, or internal notes.",\n'
+        '    "filled_template": "Clean participant-facing ICF text — no {{...}}, <<...>>, or internal notes.",\n'
         '    "evidence": [{"quote": "Verbatim quote from protocol", "page": "X"}],\n'
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
-        '    "answer": "Patient-facing plain language summary (Grade 6-8)",\n'
+        '    "answer": "Plain language summary for the participant (Grade 6-8)",\n'
         '    "notes": "Caveats or items needing manual review"\n'
         "}"
     )
@@ -89,6 +90,7 @@ def build_refinement_prompt(
         f"{var.heading}{sub}.\n\n"
         f"WHAT TO EXTRACT:\n{var.instructions}\n\n"
     )
+    prompt += prompt_runtime_context(var)
 
     if var.required_text:
         rt = var.required_text[:1500]
@@ -114,7 +116,7 @@ def build_refinement_prompt(
         "```repl\n"
         "result_dict['status'] = 'FOUND'\n"
         "result_dict['confidence'] = 'HIGH'\n"
-        "result_dict['filled_template'] = '...'  # patient-facing text\n"
+        "result_dict['filled_template'] = '...'  # participant-facing text\n"
         "result_dict['evidence'] = [{'quote': '...verbatim quote...', 'page': 'X'}]\n"
         "result_dict['answer'] = '...plain language summary...'\n"
         "```\n\n"

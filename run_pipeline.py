@@ -321,10 +321,21 @@ def main() -> int:
         "--skip-remediation",
         action="store_true",
         help=(
-            "Skip the Stage 9 HIGH flag remediation pass. "
-            "When enabled, HIGH-severity review flags and cross-section terminology "
-            "issues are annotated in the report but no automatic fixes are applied. "
+            "Skip the Stage 9 review-flag remediation pass. "
+            "When enabled, review flags and cross-section terminology issues are "
+            "annotated in the report but no automatic fixes are applied. "
             "Implies review still runs (unless --skip-review is also set)."
+        ),
+    )
+    parser.add_argument(
+        "--remediate-high-only",
+        action="store_true",
+        help=(
+            "Stage 9 remediation: fix HIGH-severity flags only (default also fixes "
+            "eligible MEDIUM flags). Eligible MEDIUM = PASSIVE_VOICE, "
+            "SENTENCE_TOO_LONG, or PLAIN_LANGUAGE_VIOLATION, or any MEDIUM flag "
+            "with a non-empty suggested_fix from review. MEDIUM REPETITION, "
+            "UNCLEAR, and TONE are never auto-fixed."
         ),
     )
     parser.add_argument(
@@ -348,6 +359,26 @@ def main() -> int:
             "(matching the final ICF) followed by a simplified body: status and "
             "confidence shown in grey italic, [TO BE FILLED MANUALLY] highlighted "
             "yellow, no evidence quotes, no review flags."
+        ),
+    )
+    parser.add_argument(
+        "--us-funded",
+        action="store_true",
+        help=(
+            "Study is funded or supported by a US federal agency (e.g. NIH, DHHS). "
+            "Extracts Summary of Informed Consent Form sections (1.x) and inserts "
+            "them at the beginning of the draft, clean, and validation ICF documents, "
+            "with the study title from section 2.1 above the summary and a page break "
+            "before the main ICF body."
+        ),
+    )
+    parser.add_argument(
+        "--sdm",
+        action="store_true",
+        help=(
+            "ICF is intended for completion by a substitute decision maker (SDM). "
+            "Prepends the SDM introduction paragraph to section 3 and uses SDM "
+            "signature-page wording (no protocol search for SDM applicability)."
         ),
     )
 
@@ -462,9 +493,12 @@ def main() -> int:
         azure_search_semantic_config=args.azure_search_semantic_config,
         skip_review=args.skip_review,
         skip_remediation=args.skip_remediation,
+        remediate_high_only=args.remediate_high_only,
         skip_adaptation=args.skip_adaptation,
         skip_harmonize=args.skip_harmonize,
         validation_phase=args.validation_phase,
+        us_funded=args.us_funded,
+        sdm=args.sdm,
     )
 
     result = pipeline.run()

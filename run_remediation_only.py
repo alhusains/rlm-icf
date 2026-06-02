@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 """
-Standalone remediation runner.
+Post-processing runner from an existing extraction report.
 
-Loads an existing extraction report JSON (produced by a previous pipeline run)
-and runs only Stage 9 (HIGH flag remediation) on it, then writes the same three
-output files that the full pipeline produces:
+Loads extractions and validations from a prior pipeline run (no protocol
+re-extraction) and runs the late-stage passes in order:
 
-  draft_icf_remediated_<stem>.docx
-  final_icf_remediated_<stem>.docx
-  extraction_report_remediated_<stem>.json
+  Stage 5.5  Section-group harmonization (optional, default on)
+  Stage 8    Plain-language review (optional, default on — always re-run)
+  Stage 9    Review-flag remediation (optional, default on)
+
+Writes updated outputs with a ``postprocessed_`` prefix:
+
+  draft_icf_postprocessed_<stem>.docx
+  final_icf_postprocessed_<stem>.docx
+  extraction_report_postprocessed_<stem>.json
+  validation_icf_postprocessed_<stem>.docx   (with --validation-phase)
 
 Usage:
     python run_remediation_only.py \\
-        --report output/extraction_report_rlm_23_5719_REBApprovedProtocol.json \\
-        --registry data/standard_ICF_template_breakdown.json
-
-Optional flags (same as run_pipeline.py):
-    --output-dir output
-    --model gpt-5.4
-    --backend openai
-    --verbose
+        --report data/above_minimal/24-5413/extraction_report_rlm_24_5413_Protocol.json \\
+        --registry data/UHN_standard_ICF_template_breakdown_new.json \\
+        --output-dir data/above_minimal/24-5413/ \\
+        --verbose
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -94,27 +98,27 @@ def _normalize_section_id(raw: str) -> str:
     return re.sub(r"^(?:SECTION|Section|section)\s+", "", raw).strip()
 
 
-def _load_review_result(data: dict | None):
-    from icf.types import ReviewFlag, ReviewResult
+def _stem_from_report_path(report_path: str) -> str:
+    report_basename = os.path.basename(report_path)
+    for prefix in ("extraction_report_", "extraction_report"):
+        if report_basename.startswith(prefix):
+            return report_basename[len(prefix) :].replace(".json", "")
+    return report_basename.replace(".json", "")
 
-    if data is None:
-        return None
-    flags = []
-    for f in data.get("flags", []):
-        flags.append(
-            ReviewFlag(
-                section_id=_normalize_section_id(f["section_id"]),
-                flagged_text=f.get("flagged_text", ""),
-                issue_type=f.get("issue_type", "UNCLEAR"),
-                suggestion=f.get("suggestion", ""),
-                severity=f.get("severity", "LOW"),
-                suggested_fix=f.get("suggested_fix", ""),
-            )
-        )
-    return ReviewResult(
-        flags=flags,
-        cross_section_notes=data.get("cross_section_notes", ""),
-    )
+
+def _backend_kwargs_from_args(args: argparse.Namespace) -> dict:
+    backend_kwargs: dict = {}
+    if args.max_tokens is not None:
+        backend_kwargs["max_tokens"] = args.max_tokens
+    if args.base_url is not None:
+        backend_kwargs["base_url"] = args.base_url
+    if args.api_key is not None:
+        backend_kwargs["api_key"] = args.api_key
+    if args.azure_endpoint is not None:
+        backend_kwargs["azure_endpoint"] = args.azure_endpoint
+    if args.azure_deployment is not None:
+        backend_kwargs["azure_deployment"] = args.azure_deployment
+    return backend_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +128,10 @@ def _load_review_result(data: dict | None):
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Re-run Stage 9 remediation on an existing extraction report.",
+        description=(
+            "Run harmonization, plain-language review, and remediation on an "
+            "existing extraction report (no protocol re-extraction)."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -149,8 +156,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--backend",
-        default="openai",
-        help="LLM provider backend (default: openai).",
+        default="azure_openai",
+        help="LLM provider backend (default: azure_openai).",
     )
     parser.add_argument(
         "--base-url",
@@ -181,7 +188,35 @@ def main() -> int:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Show verbose remediation output.",
+        help="Show verbose output for harmonize, review, and remediation.",
+    )
+    parser.add_argument(
+        "--skip-harmonize",
+        action="store_true",
+        help="Skip Stage 5.5 section-group harmonization (see run_pipeline.py --skip-harmonize).",
+    )
+    parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help="Skip Stage 8 plain-language review (remediation requires review unless also skipped).",
+    )
+    parser.add_argument(
+        "--skip-remediation",
+        action="store_true",
+        help="Skip Stage 9 remediation (review flags are still written to the report).",
+    )
+    parser.add_argument(
+        "--remediate-high-only",
+        action="store_true",
+        help=(
+            "Stage 9: fix HIGH-severity flags only (default also fixes eligible MEDIUM flags). "
+            "See run_pipeline.py --remediate-high-only."
+        ),
+    )
+    parser.add_argument(
+        "--validation-phase",
+        action="store_true",
+        help="Also write validation_icf_postprocessed_<stem>.docx (EC review layout).",
     )
     args = parser.parse_args()
 
@@ -194,27 +229,19 @@ def main() -> int:
 
     extractions = _load_extractions(report.get("extractions", []))
     validations = _load_validations(report.get("validations", []))
-    review_result = _load_review_result(report.get("review"))
-    summary = report.get("summary", {})
+    summary = dict(report.get("summary", {}))
 
-    if review_result is None:
-        print("ERROR: No 'review' section in report. Run the pipeline without --skip-review first.")
+    if not extractions:
+        print("ERROR: No extractions in report.", file=sys.stderr)
         return 1
 
-    high_count = sum(1 for f in review_result.flags if f.severity == "HIGH")
-    has_notes = bool(review_result.cross_section_notes.strip())
     print(
-        f"[LOAD] {len(extractions)} extractions, {len(validations)} validations, "
-        f"{len(review_result.flags)} review flag(s) ({high_count} HIGH), "
-        f"cross-section notes: {bool(has_notes)}"
+        f"[LOAD] {len(extractions)} extractions, {len(validations)} validations "
+        f"(prior review flags in file are ignored — review is re-run)"
     )
 
-    if high_count == 0 and not has_notes:
-        print("[REMEDIATE] No HIGH flags or cross-section notes — nothing to remediate.")
-        return 0
-
     # ------------------------------------------------------------------
-    # Load template registry (needed for variables + output docs)
+    # Load template registry
     # ------------------------------------------------------------------
     print(f"[LOAD] Reading registry: {args.registry}")
     from icf.registry import load_template_registry
@@ -222,78 +249,129 @@ def main() -> int:
     variables = load_template_registry(args.registry)
     print(f"[LOAD] {len(variables)} template sections loaded.")
 
-    # Resolve logo path (same logic as pipeline.py)
     logo_candidate = os.path.join(os.path.dirname(args.registry) or ".", "UHN_logo.png")
     logo_path = logo_candidate if os.path.isfile(logo_candidate) else None
 
+    backend_kwargs = _backend_kwargs_from_args(args)
+
     # ------------------------------------------------------------------
-    # Run Stage 9 remediation
+    # Stage 5.5: Harmonization
     # ------------------------------------------------------------------
-    from icf.remediate import RemediationEngine
+    if not args.skip_harmonize:
+        from icf.harmonize import SectionGroupHarmonizer
 
-    backend_kwargs: dict = {}
-    if args.max_tokens is not None:
-        backend_kwargs["max_tokens"] = args.max_tokens
-    if args.base_url is not None:
-        backend_kwargs["base_url"] = args.base_url
-    if args.api_key is not None:
-        backend_kwargs["api_key"] = args.api_key
-    if args.azure_endpoint is not None:
-        backend_kwargs["azure_endpoint"] = args.azure_endpoint
-    if args.azure_deployment is not None:
-        backend_kwargs["azure_deployment"] = args.azure_deployment
-
-    remediator = RemediationEngine(
-        model_name=args.model,
-        backend=args.backend,
-        backend_kwargs=backend_kwargs,
-        verbose=args.verbose,
-    )
-
-    print(f"\n[REMEDIATE] Running remediation ({high_count} HIGH flag(s)) ...")
-    patched_extractions, remediation_result = remediator.run_remediation(
-        extractions, variables, review_result
-    )
-
-    n_patched = sum(1 for r in remediation_result.records if r.success)
-    n_total = len(remediation_result.records)
-    print(f"[REMEDIATE] {n_patched}/{n_total} section(s) patched successfully.")
-    if remediation_result.unaddressed_notes:
-        print(
-            f"[REMEDIATE] Unaddressed (human review): {remediation_result.unaddressed_notes[:300]}"
+        harmonizer = SectionGroupHarmonizer(
+            model_name=args.model,
+            backend=args.backend,
+            backend_kwargs=backend_kwargs,
+            verbose=args.verbose,
         )
-
-    # ------------------------------------------------------------------
-    # Build output paths
-    # ------------------------------------------------------------------
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Derive stem from input report filename, replacing the prefix
-    report_basename = os.path.basename(args.report)
-    # Strip known prefix to get the original stem
-    for prefix in ("extraction_report_", "extraction_report"):
-        if report_basename.startswith(prefix):
-            stem = report_basename[len(prefix) :].replace(".json", "")
-            break
+        print("\n[HARMONIZE] Running section-group harmonization (Stage 5.5) ...")
+        extractions, harmonize_audit = harmonizer.run_harmonization(extractions, variables)
+        total_changed = sum(len(v) for v in harmonize_audit.values())
+        print(
+            f"[HARMONIZE] Done — {total_changed} sub-section(s) revised "
+            f"across {len(harmonize_audit)} section(s)."
+        )
     else:
-        stem = report_basename.replace(".json", "")
+        print("\n[HARMONIZE] Skipped (--skip-harmonize).")
 
-    draft_path = os.path.join(args.output_dir, f"draft_icf_remediated_{stem}.docx")
-    final_path = os.path.join(args.output_dir, f"final_icf_remediated_{stem}.docx")
-    report_path = os.path.join(args.output_dir, f"extraction_report_remediated_{stem}.json")
+    # ------------------------------------------------------------------
+    # Stage 8: Review (always fresh)
+    # ------------------------------------------------------------------
+    review_result = None
+    if not args.skip_review:
+        from icf.review import ReviewEngine
+
+        print("\n[REVIEW] Running plain language review (Stage 8) ...")
+        reviewer = ReviewEngine(
+            model_name=args.model,
+            backend=args.backend,
+            backend_kwargs=backend_kwargs,
+            verbose=args.verbose,
+        )
+        review_result = reviewer.run_review(extractions, variables)
+        n_flags = len(review_result.flags)
+        high = sum(1 for f in review_result.flags if f.severity == "HIGH")
+        medium = sum(1 for f in review_result.flags if f.severity == "MEDIUM")
+        print(f"[REVIEW] {n_flags} flag(s): {high} HIGH, {medium} MEDIUM.")
+        if review_result.cross_section_notes:
+            preview = review_result.cross_section_notes[:200]
+            print(f"[REVIEW] Cross-section notes: {preview}")
+        summary["review_flags"] = n_flags
+    else:
+        print("\n[REVIEW] Skipped (--skip-review).")
+        summary["review_flags"] = 0
+
+    # ------------------------------------------------------------------
+    # Stage 9: Remediation
+    # ------------------------------------------------------------------
+    remediation_result = None
+    if args.skip_review:
+        if not args.skip_remediation:
+            print("\n[REMEDIATE] Skipped (requires review — use without --skip-review).")
+    elif args.skip_remediation:
+        print("\n[REMEDIATE] Skipped (--skip-remediation).")
+    elif review_result is not None:
+        from icf.remediate import RemediationEngine, _is_remediable_flag, _is_remediable_medium
+
+        remediate_medium = not args.remediate_high_only
+        high_count = sum(1 for f in review_result.flags if f.severity == "HIGH")
+        medium_count = sum(
+            1 for f in review_result.flags if remediate_medium and _is_remediable_medium(f)
+        )
+        remediable_count = sum(
+            1 for f in review_result.flags if _is_remediable_flag(f, remediate_medium)
+        )
+        has_notes = bool(review_result.cross_section_notes.strip())
+
+        if remediable_count == 0 and not has_notes:
+            print("\n[REMEDIATE] No remediable flags or cross-section notes — skipping.")
+        else:
+            remediator = RemediationEngine(
+                model_name=args.model,
+                backend=args.backend,
+                backend_kwargs=backend_kwargs,
+                verbose=args.verbose,
+                remediate_medium=remediate_medium,
+            )
+            print(
+                f"\n[REMEDIATE] Running Stage 9 remediation "
+                f"({high_count} HIGH, {medium_count} eligible MEDIUM flag(s), "
+                f"cross-section notes: {bool(has_notes)}) ..."
+            )
+            extractions, remediation_result = remediator.run_remediation(
+                extractions, variables, review_result
+            )
+            n_patched = sum(1 for r in remediation_result.records if r.success)
+            n_total = len(remediation_result.records)
+            print(f"[REMEDIATE] {n_patched}/{n_total} section(s) patched successfully.")
+            if remediation_result.unaddressed_notes:
+                print(
+                    f"[REMEDIATE] Unaddressed (human review): "
+                    f"{remediation_result.unaddressed_notes[:300]}"
+                )
 
     # ------------------------------------------------------------------
     # Write outputs
     # ------------------------------------------------------------------
+    os.makedirs(args.output_dir, exist_ok=True)
+    stem = _stem_from_report_path(args.report)
+
+    draft_path = os.path.join(args.output_dir, f"draft_icf_postprocessed_{stem}.docx")
+    final_path = os.path.join(args.output_dir, f"final_icf_postprocessed_{stem}.docx")
+    report_path = os.path.join(args.output_dir, f"extraction_report_postprocessed_{stem}.json")
+    validation_path = os.path.join(args.output_dir, f"validation_icf_postprocessed_{stem}.docx")
+
     from icf.assemble import generate_draft_docx, generate_report_json
-    from icf.clean_icf import generate_clean_icf_docx
+    from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
 
     print(f"\n[ASSEMBLE] Writing draft ICF  -> {draft_path}")
-    generate_draft_docx(patched_extractions, validations, variables, draft_path, review_result)
+    generate_draft_docx(extractions, validations, variables, draft_path, review_result)
 
     print(f"[ASSEMBLE] Writing report     -> {report_path}")
     generate_report_json(
-        patched_extractions,
+        extractions,
         validations,
         summary,
         report_path,
@@ -303,27 +381,48 @@ def main() -> int:
 
     print(f"[ASSEMBLE] Writing final ICF  -> {final_path}")
     generate_clean_icf_docx(
-        extractions=patched_extractions,
+        extractions=extractions,
         variables=variables,
         output_path=final_path,
         logo_path=logo_path,
     )
+
+    if args.validation_phase:
+        print(f"[ASSEMBLE] Writing validation ICF -> {validation_path}")
+        generate_validation_docx(
+            extractions=extractions,
+            variables=variables,
+            output_path=validation_path,
+            logo_path=logo_path,
+        )
 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
     sep = "=" * 60
     print(f"\n{sep}")
-    print("REMEDIATION SUMMARY")
+    print("POST-PROCESSING SUMMARY")
     print(sep)
-    print(f"  Sections patched:    {n_patched}/{n_total}")
-    failed = [r for r in remediation_result.records if not r.success]
-    if failed:
-        print(f"  Failed sections:     {', '.join(r.section_id for r in failed)}")
-    print(f"  Global rules:        {len(remediation_result.global_rules)}")
-    print(f"  Draft ICF:   {draft_path}")
-    print(f"  Final ICF:   {final_path}")
-    print(f"  Report:      {report_path}")
+    print(f"  Harmonize:     {'skipped' if args.skip_harmonize else 'done'}")
+    if args.skip_review:
+        review_summary = "skipped"
+    else:
+        review_summary = f"{summary.get('review_flags', 0)} flags"
+    print(f"  Review:        {review_summary}")
+    if remediation_result is not None:
+        n_patched = sum(1 for r in remediation_result.records if r.success)
+        n_total = len(remediation_result.records)
+        print(f"  Remediation:   {n_patched}/{n_total} section(s) patched")
+        failed = [r for r in remediation_result.records if not r.success]
+        if failed:
+            print(f"  Failed:        {', '.join(r.section_id for r in failed)}")
+    else:
+        print("  Remediation:   skipped")
+    print(f"  Draft ICF:     {draft_path}")
+    print(f"  Final ICF:     {final_path}")
+    print(f"  Report:        {report_path}")
+    if args.validation_phase:
+        print(f"  Validation:    {validation_path}")
     print(sep)
 
     return 0

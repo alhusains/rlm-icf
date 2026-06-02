@@ -7,6 +7,7 @@ text is loaded separately as context_0 in the REPL environment.
 
 from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
 from icf.types import TemplateVariable
+from icf.runtime_injections import prompt_runtime_context
 
 
 def _availability_note(var: TemplateVariable) -> str:
@@ -48,7 +49,7 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "{\n"
         f'    "section_id": "{var.section_id}",\n'
         '    "status": "FOUND" | "NOT_FOUND" | "PARTIAL",\n'
-        '    "filled_template": "PATIENT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",\n'
+        '    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",\n'
         '    "evidence": [\n'
         '        {"quote": "Exact verbatim quote from protocol", "page": "Page number"}\n'
         "    ],\n"
@@ -64,6 +65,7 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         f"TARGET: {var.heading}{sub}\n"
         f"WHAT TO EXTRACT: {var.instructions}\n\n"
     )
+    prompt += prompt_runtime_context(var)
 
     if var.required:
         importance = "REQUIRED — this section must appear in every ICF."
@@ -166,7 +168,10 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "   IMPORTANT: Never write FINAL_VAR inside an if/else block.\n\n"
         f"RESULT JSON SCHEMA:\n{json_schema}\n\n"
         "RULES:\n"
-        "1. 'filled_template' is READ BY PATIENTS. It must contain ONLY: required ICF wording "
+        "1. 'filled_template' is READ BY THE STUDY PARTICIPANT. The participant may be a patient, "
+        "a clinician, a healthy volunteer, a caregiver, or any other person the study is enrolling "
+        "— the protocol defines who. Write for whoever the protocol says is being recruited. "
+        "It must contain ONLY: required ICF wording "
         "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
         "missing fields. NEVER include sentences about what was or wasn't found, references to "
         "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"

@@ -130,8 +130,15 @@ def load_docx(filepath: str) -> IndexedProtocol:
         elif tag == "tbl":
             table = Table(block, doc)
             for row in table.rows:
-                row_cells = [_sanitize_text(cell.text).strip() for cell in row.cells if cell.text.strip()]
-                if row_cells:
+                # Replace intra-cell newlines (multi-paragraph cells) with spaces so the
+                # pipe-delimited row stays on one line.  Keep empty cells as empty strings
+                # to preserve column alignment — filtering them out loses positional info
+                # (e.g. a blank "During SBRT" cell shifts all subsequent X marks left).
+                row_cells = [
+                    _sanitize_text(cell.text).replace("\n", " ").strip()
+                    for cell in row.cells
+                ]
+                if any(row_cells):
                     text = " | ".join(row_cells)
                     current_parts.append(text)
                     current_length += len(text)

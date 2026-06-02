@@ -115,6 +115,47 @@ if env_problems:
     st.stop()
 
 # ---------------------------------------------------------------------------
+# First-visit disclaimer (modal gate)
+# ---------------------------------------------------------------------------
+
+if "disclaimer_accepted" not in st.session_state:
+    st.session_state.disclaimer_accepted = False
+
+
+@st.dialog("Important Notice", width="large")
+def show_disclaimer() -> None:
+    st.markdown(
+        "Before using the **AI-ICF Tool**, please read and acknowledge the following:"
+    )
+    st.markdown(
+        "- This tool generates an **AI-assisted draft** Informed Consent Form (ICF) from "
+        "study protocols. Output may contain errors, omissions, or inaccuracies.\n"
+        "- Full responsibility for reviewing, verifying, revising, and approving all "
+        "consent documentation rests with the study team. Generated drafts must not "
+        "be submitted to the REB or shared with study participants without thorough "
+        "human review and approval.\n"
+        "- This tool does not replace legal, regulatory, ethical, or clinical review."
+    )
+    st.divider()
+    accepted = st.checkbox(
+        "I understand and agree to review the AI-generated draft ICF before submitting it to the REB",
+        value=False,
+    )
+    if st.button(
+        "Continue to AI-ICF Tool",
+        type="primary",
+        use_container_width=True,
+        disabled=not accepted,
+    ):
+        st.session_state.disclaimer_accepted = True
+        st.rerun()
+
+
+if not st.session_state.disclaimer_accepted:
+    show_disclaimer()
+    st.stop()
+
+# ---------------------------------------------------------------------------
 # Sidebar — About
 # ---------------------------------------------------------------------------
 
@@ -123,6 +164,16 @@ with st.sidebar:
     if logo_path.exists():
         st.image(str(logo_path), use_container_width=True)
         st.markdown("")
+
+
+    st.warning(
+        "**Beta Version**\n\n"
+        "This tool is under active development. AI-generated output may contain "
+        "errors, omissions, or inaccuracies, particularly for complex or "
+        "non-standard study designs. As a trial deployment participant, we ask that "
+        "you please provide the AI-ICF team with feedback to enable continuous "
+        "improvement of the tool."
+    )
 
     st.markdown("## About this tool")
     st.markdown(
@@ -142,21 +193,26 @@ with st.sidebar:
 
     st.markdown("**What you get**")
     st.markdown(
-        "- A draft ICF annotated with source evidence, confidence scores, "
-        "and plain-language review flags\n"
-        "- A draft ICF in a clean layout without any traceability markups"
+        "Two versions of the consent form are generated:\n\n"
+        "1. **Draft version:** your working copy to review and update prior to "
+        "CAPCR submission.\n\n"
+        "2. **Marked-up version:** provides traceability to protocol content used "
+        "by the AI and includes an appendix with suggested plain language improvements."
+    )
+
+    st.markdown("**Privacy and Confidentiality**")
+    st.markdown(
+        "- All processing runs entirely within UHN's secure environment. No data "
+        "ever leaves UHN's managed environment.\n"
+        "- Protocols and draft ICFs are kept only during processing, and then deleted. "
+        "Only limited metadata (usage data) is retained for audit purposes.\n"
+        "- No AI model training/learning occurs with submitted protocols or generated "
+        "draft consent forms. Submitted protocols are used solely for consent form "
+        "generation.\n"
+        "- For more information, please email [agata.misiura@uhn.ca](mailto:agata.misiura@uhn.ca)"
     )
 
     st.divider()
-
-    st.warning(
-        "**Beta Version**\n\n"
-        "This tool is under active development. AI-generated output may contain "
-        "errors, omissions, or inaccuracies — particularly for complex or "
-        "non-standard study designs. As a trial deployment participant, we ask that "
-        "you please provide the AI-ICF team with feedback to enable continuous "
-        "improvement of the tool."
-    )
 
     st.error(
         "**Important Disclaimers**\n\n"
@@ -171,7 +227,8 @@ with st.sidebar:
     st.divider()
     st.caption(
         f"Model: `{os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'unknown')}`\n\n"
-        "For support, contact your study coordinator or REB office."
+        "For questions, please contact the project team: "
+        "[agata.misiura@uhn.ca](mailto:agata.misiura@uhn.ca)"
     )
 
 # ---------------------------------------------------------------------------
@@ -200,7 +257,7 @@ st.markdown("Choose the consent form template for your study.")
 
 STUDY_OPTIONS: dict[str, str | None] = {
     "— Select a study type —": None,
-    "Full Informed Consent Form": "Full Informed Consent Form",
+    "Above Minimal Risk Informed Consent Form": "Full Informed Consent Form",
     "Minimal Risk Informed Consent Form": "Minimal Risk Informed Consent Form",
 }
 
@@ -214,11 +271,32 @@ selected_study: str | None = STUDY_OPTIONS[selected_study_label]  # type: ignore
 
 if selected_study == "Full Informed Consent Form":
     st.success(
-            "**Full Informed Consent Form** selected. The full UHN ICF template will be used, suitable for studies involving more than minimal risk."
+        "**Above Minimal Risk Informed Consent Form** selected. This template is suitable for studies involving more than minimal risk."
     )
 elif selected_study == "Minimal Risk Informed Consent Form":
     st.success(
         "**Minimal Risk Informed Consent Form** selected. The simplified ICF template will be used, suitable for studies where risks are no greater than those of everyday life."
+    )
+
+if selected_study is not None:
+    st.checkbox(
+        "Is this study funded or supported by a US federal funding agency "
+        "(e.g., NIH, DHHS, etc.)?",
+        value=False,
+        key="us_federal_funding",
+    )
+    st.caption(
+        "Select this field if your study is US federally funded or supported to generate "
+        "the **Summary of Informed Consent Form**, which is required by US federal "
+        "regulations."
+    )
+    st.checkbox(
+        "Is this form intended to be completed by a substitute decision maker (SDM)?",
+        value=False,
+        key="sdm_form",
+    )
+    st.caption(
+        "If you select this, the generated consent form will include language and signature space for the SDM."
     )
 
 st.markdown(
@@ -241,9 +319,14 @@ if selected_study is None:
 else:
     st.markdown(
         "Upload your study protocol. Accepted formats: **PDF** or **DOCX** only.\n\n"
-        "> **Note:** Legacy `.doc` files are **not** accepted. "
-        "If your protocol is in `.doc` format, please open it in Word and save it as "
-        "`.docx` before uploading."
+        "> **Note:** Legacy `.doc` files are **not** accepted. If your protocol is in "
+        "`.doc` format, please do the following before uploading: "
+        "(1) Open the file in Word; "
+        "(2) Click **File**; "
+        "(3) Select **Save As**; "
+        "(4) Select the folder to save your file in; "
+        '(5) Select **Word Document (*.docx)** in the **Save as type** field; '
+        "(6) Click **Save**."
     )
     uploaded = st.file_uploader(
         "Clinical protocol",
@@ -277,10 +360,19 @@ if selected_study is None or uploaded is None:
     )
     generate_clicked = False
 else:
+    study_display = (
+        "Above Minimal Risk Informed Consent Form"
+        if selected_study == "Full Informed Consent Form"
+        else selected_study
+    )
     st.markdown(
         f"Everything is ready. Click **Generate ICF** to begin processing "
-        f"the **{uploaded.name}** protocol as a **{selected_study}**.\n\n"
-        "This typically takes **10–20 minutes** depending on protocol length."
+        f"the **{uploaded.name}** protocol as a **{study_display}**.\n\n"
+        "This typically takes **20–30 minutes**. Processing time may vary based on "
+        "protocol length and level of detail.\n\n"
+        "Once ready, your draft consent form will be available for download on this "
+        "page. A copy will also be emailed to you. Before submitting to CAPCR, please "
+        "review, revise and modify the form as required."
     )
     generate_clicked = st.button(
         "Generate ICF",
@@ -320,6 +412,9 @@ def run_pipeline(
         out_dir = workdir / "output"
         out_dir.mkdir()
 
+        us_funded = bool(st.session_state.get("us_federal_funding", False))
+        sdm = bool(st.session_state.get("sdm_form", False))
+
         pipeline = ICFPipeline(
             protocol_path=str(protocol_path),
             template_path=registry_path,
@@ -334,6 +429,8 @@ def run_pipeline(
             extraction_backend="rlm",
             verbose=False,
             skip_review=False,
+            us_funded=us_funded,
+            sdm=sdm,
             # Never write a debug log dir in production (protocol text is sensitive).
             debug_log_dir=None,
         )
@@ -361,11 +458,16 @@ if generate_clicked and uploaded is not None and selected_study is not None:
         expanded=True,
     ) as status:
         status.write(f"Template: **{selected_study}**")
+        if st.session_state.get("us_federal_funding"):
+            status.write("US federal funding: **yes** (Summary of ICF sections will be included)")
+        if st.session_state.get("sdm_form"):
+            status.write("Substitute decision maker (SDM): **yes**")
         status.write(f"Protocol: **{uploaded.name}**")
         status.write(f"Started: {datetime.now().strftime('%H:%M:%S')}")
         status.write(
             "Extracting and synthesising information from the protocol. "
-            "This typically takes 10-20 minutes…"
+            "This typically takes 20–30 minutes. Processing time may vary based on "
+            "protocol length and level of detail."
         )
 
         run_pipeline(uploaded.getvalue(), uploaded.name, registry_path)
@@ -403,16 +505,28 @@ if st.session_state.run_outputs:
         "submission to the REB or use with study participants."
     )
 
-    primary = [
-        o for o in st.session_state.run_outputs if o[0].startswith(("final_icf_", "draft_icf_"))
-    ]
-    secondary = [o for o in st.session_state.run_outputs if o not in primary]
+    st.markdown(
+        "Two versions of the consent form are generated:\n\n"
+        "1. **Draft version:** your working copy to review and update prior to "
+        "CAPCR submission.\n\n"
+        "2. **Marked-up version:** provides traceability to protocol content used "
+        "by the AI and includes an appendix with suggested plain language improvements."
+    )
 
-    for name, data, mime in primary:
-        if name.startswith("final_icf_"):
-            label = "📘 Download Final ICF (clean, publication-ready)"
-        else:
-            label = "📝 Download Draft ICF (annotated with evidence & review notes)"
+    primary_by_prefix = {
+        o[0]: o
+        for o in st.session_state.run_outputs
+        if o[0].startswith(("final_icf_", "draft_icf_"))
+    }
+    download_order = [
+        ("final_icf_", "Download the draft version of the consent form"),
+        ("draft_icf_", "Download the marked up version that includes evidence annotations"),
+    ]
+    for prefix, label in download_order:
+        match = next((item for name, item in primary_by_prefix.items() if name.startswith(prefix)), None)
+        if match is None:
+            continue
+        name, data, mime = match
         st.download_button(
             label=label,
             data=data,
@@ -420,17 +534,6 @@ if st.session_state.run_outputs:
             mime=mime,
             use_container_width=True,
         )
-
-    if secondary:
-        with st.expander("Additional artifacts (extraction report, adapted registry, etc.)"):
-            for name, data, mime in secondary:
-                st.download_button(
-                    label=name,
-                    data=data,
-                    file_name=name,
-                    mime=mime,
-                    key=f"dl_{name}",
-                )
 
     st.info(
         "Files are available only in your current browser session. "
