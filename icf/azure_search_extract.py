@@ -116,8 +116,6 @@ class AzureSearchExtractionEngine:
         variable: TemplateVariable,
     ) -> ExtractionResult:
         """Extract a single ICF section using Azure AI Search + LLM."""
-        if variable.adaptation_skipped:
-            return self._make_adaptation_skipped_result(variable)
         if variable.is_standard_text:
             return self._make_standard_result(variable)
         if not variable.is_in_protocol and not variable.partially_in_protocol:
@@ -313,26 +311,6 @@ class AzureSearchExtractionEngine:
             evidence=[],
             confidence="HIGH",
             notes="Standard required text — no extraction needed.",
-        )
-
-    @staticmethod
-    def _make_adaptation_skipped_result(
-        variable: TemplateVariable,
-    ) -> ExtractionResult:
-        reason = (
-            variable.adaptation_notes
-            or "Marked as not applicable for this study by adaptation pass."
-        )
-        return ExtractionResult(
-            section_id=variable.section_id,
-            heading=variable.heading,
-            sub_section=variable.sub_section,
-            status="ADAPTATION_SKIPPED",
-            answer="",
-            filled_template="",
-            evidence=[],
-            confidence="N/A",
-            notes=reason,
         )
 
     @staticmethod

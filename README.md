@@ -16,21 +16,18 @@ Protocol (PDF/DOCX)  +  ICF Template Registry (JSON)
          |                        |
          +--------+---------------+
                   v
-        [3] Phase A: Extract trigger sections (Introduction, Purpose)
+        [3] Inject runtime study context (US-funding, SDM, ...)
                   |
                   v
-        [4] Adapt: LLM decides which optional sections to skip
+        [4] Extract all sections
                   |
                   v
-        [5] Phase B: Extract remaining sections
+        [5] Validate (quote grounding + reading level)
                   |
                   v
-        [6] Validate (quote grounding + reading level)
-                  |
-                  v
-        [7] Assemble outputs
-              +-- draft_icf_*.docx      (annotated with evidence & status)
-              +-- final_icf_*.docx      (clean, publication-quality, UHN-branded)
+        [6] Assemble outputs
+              +-- draft_icf_*.docx          (UHN-branded draft for study-team review)
+              +-- marked_up_icf_*.docx      (annotated with evidence, status & review flags)
               +-- extraction_report_*.json  (full structured data)
 ```
 
@@ -171,7 +168,7 @@ The judge applies 7 explicit rules to ensure accurate scoring:
 2. **Required UHN language** — must be present and faithful to the guideline meaning; present = credit, missing or meaning-altered = penalize
 3. **Suggested text** — only penalize if the protocol supports it but the AI omitted it
 4. **GT extras** — do not penalize the AI for omitting GT content that goes beyond its task scope or what the protocol evidence supports
-5. **Placeholders** — `[TO BE FILLED MANUALLY]`, `{{field}}`, `<<insert>>` where extraction notes confirm info was not found = correct abstention, not fabrication
+5. **Placeholders** — `[PLEASE COMPLETE]`, `{{field}}`, `<<insert>>` where extraction notes confirm info was not found = correct abstention, not fabrication
 6. **All-signals verification** — use notes + quotes + GT together; do not call fabrication from missing quotes alone if notes confirm the content exists in the protocol
 7. **Genuine fabrication** — content not in evidence, notes, or required/suggested text that contradicts or exceeds the GT = penalized firmly
 
@@ -282,14 +279,14 @@ run_eval.py                  # CLI entry point for evaluation
 run_eval_review.py           # CLI entry point for review DOCX generation
 
 icf/
-  pipeline.py                # Main orchestrator (7 stages)
+  pipeline.py                # Main orchestrator
   ingest.py                  # Protocol PDF/DOCX parser
   registry.py                # ICF template registry loader (JSON/CSV)
   types.py                   # Data types (TemplateVariable, ExtractionResult, etc.)
-  adapt.py                   # Dynamic section adaptation pass
+  runtime_injections.py      # User-flag study-context injections (US-funding, SDM)
   validate.py                # Quote verification + reading level check
-  assemble.py                # Draft ICF DOCX + JSON report generator
-  clean_icf.py               # Publication-quality ICF DOCX generator
+  assemble.py                # Marked-up ICF DOCX + JSON report generator
+  clean_icf.py               # Draft ICF DOCX generator (UHN publication layout)
 
   # Extraction backends
   extract.py                 # RLM extraction engine (default)
@@ -314,16 +311,15 @@ icf/
 
 data/
   standard_ICF_template_breakdown.json   # ICF template registry
-  UHN_logo.png                           # Logo for clean ICF header
+  UHN_logo.png                           # Logo for the draft ICF header
 
 EvalRubric/
   AI-Generated ICF Evaluation Outline - v3 - March2026.docx  # Evaluation criteria
 
 output/                      # Generated at runtime
-  draft_icf_*.docx           # Annotated draft ICF
-  final_icf_*.docx           # Clean publication-quality ICF
+  draft_icf_*.docx           # UHN-branded draft ICF for study-team review
+  marked_up_icf_*.docx       # Annotated ICF (evidence, status, review flags)
   extraction_report_*.json   # Full structured extraction data
-  adapted_registry.json      # Adaptation decisions audit trail
   eval_report_combined_<backends>_<protocol>.json   # Evaluation report (combined mode)
   eval_report_detailed_<backends>_<protocol>.json   # Evaluation report (detailed/DeepEval mode)
   review_<eval_report_stem>.docx                    # Colour-coded review document for human reviewers

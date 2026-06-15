@@ -1,5 +1,8 @@
 """
-Clean publication-quality ICF document generator.
+Draft ICF document generator (UHN publication-quality layout).
+
+Produces the draft ICF that the study team reviews and edits before CAPCR
+submission:
 
   - UHN logo in the header (top-left)
   - Bordered footer with automatic "Page X of Y" page numbering
@@ -7,10 +10,11 @@ Clean publication-quality ICF document generator.
   - Justified body text in Arial 11 pt
   - Standard UHN signature pages appended verbatim (only the TITLE line changes)
 
-Only sections with usable content (FOUND / PARTIAL / STANDARD_TEXT) appear in
-the body.  Required sections that could not be extracted get a [TO BE COMPLETED]
-placeholder so the document remains structurally whole.  Optional sections with
-no content are silently omitted.
+Each section carries a small grey italic status/confidence annotation below its
+heading, ``[PLEASE COMPLETE]`` markers are highlighted yellow, and sections
+that could not be extracted show suggested text in grey italic. No confidence
+colour-coding, evidence quotes, or review flags appear here — those live in the
+separate marked-up ICF (see assemble.py).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
+from icf.runtime_injections import SIGNATURE_CONSENT_SECTION_ID, resolve_signature_consent_bullets
 from icf.types import ExtractionResult, TemplateVariable
 
 # ---------------------------------------------------------------------------
@@ -33,17 +38,28 @@ from icf.types import ExtractionResult, TemplateVariable
 
 _FONT = "Arial"
 _BODY_PT = 11
+_ANNOTATION_PT = 10
 _SMALL_PT = 9
+
+# RLM emits MARKER_PLEASE_COMPLETE inline; section-level labels for empty/skipped
+# sections are chosen at Word render time.
+MARKER_PLEASE_COMPLETE = "[PLEASE COMPLETE]"
+MARKER_REQUIRED_SUGGESTED = (
+    "[Please complete using the below suggested text. This is a required section.]"
+)
+MARKER_OPTIONAL_SUGGESTED = (
+    "[Please complete using the below suggested text, if relevant to this study.]"
+)
+
+_AI_DISCLAIMER = (
+    "Parts of the initial draft of this consent form were created with help from "
+    "an artificial intelligence tool developed at University Health Network to "
+    "support consent form preparation. The final approved version was reviewed "
+    "by the research team."
+)
 
 _CONTENT_STATUSES = {"FOUND", "PARTIAL", "STANDARD_TEXT"}
 _BULLET_RE = re.compile(r"^[•\-–\*·]\s+")
-
-# Confidence-level colours (applied to heading + body text of each section)
-_CONFIDENCE_COLORS: dict[str, RGBColor] = {
-    "HIGH": RGBColor(0x00, 0xB0, 0x50),   # green
-    "MEDIUM": RGBColor(0xFF, 0xC0, 0x00),  # amber
-    "LOW": RGBColor(0xFF, 0x00, 0x00),     # red
-}
 
 # Tab stop positions (in twips, measured from the left margin) used for all
 # three-column signature blocks so every column aligns perfectly.
@@ -56,7 +72,7 @@ _SIG_TAB2 = 6480  # 4.5" — separates name column from date column
 # ---------------------------------------------------------------------------
 
 
-def generate_clean_icf_docx(
+def generate_draft_docx(
     extractions: list[ExtractionResult],
     variables: list[TemplateVariable],
     output_path: str,
@@ -64,7 +80,18 @@ def generate_clean_icf_docx(
     us_funded: bool = False,
     sdm: bool = False,
 ) -> str:
-    """Generate a clean, publication-quality ICF DOCX.
+    """Generate the draft ICF for study-team review (UHN publication layout).
+
+    Shares the full visual style of an approved ICF (Arial 11 pt, UHN header/
+    footer, all-caps underlined headings, subsection grouping, signature pages):
+
+    - No confidence-based colour coding — all text is black.
+    - A small italic grey "Status: X | Confidence: Y" annotation is written
+      directly below each section / sub-section heading.
+    - Sections that could not be extracted show ``[PLEASE COMPLETE]`` (or a
+      suggested-text variant) highlighted in yellow, followed by suggested text
+      in grey italic.
+    - No evidence quotes, no review flags, no review appendix.
 
     Args:
         extractions: All extraction results produced by the pipeline.
@@ -83,52 +110,13 @@ def generate_clean_icf_docx(
 
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
 
-    _write_intro_page(doc)
-    if us_funded:
-        _write_us_summary_sections(doc, variables, ext_map)
-    _write_cover_page(doc, variables, ext_map)
-    _write_main_icf_body(doc, variables, ext_map)
-    _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm)
-
-    doc.save(output_path)
-    return output_path
-
-
-def generate_validation_docx(
-    extractions: list[ExtractionResult],
-    variables: list[TemplateVariable],
-    output_path: str,
-    logo_path: str | None = None,
-    us_funded: bool = False,
-    sdm: bool = False,
-) -> str:
-    """Generate a validation-phase ICF for ethics coordinator (EC) review.
-
-    Shares the complete visual style of the final ICF (Arial 11 pt, UHN header/
-    footer, all-caps underlined headings, subsection grouping, signature pages)
-    with these differences from the final ICF:
-
-    - No confidence-based colour coding — all text is black.
-    - A small italic grey "Status: X | Confidence: Y" annotation is written
-      directly below each section / sub-section heading.
-    - Sections that could not be extracted show ``[TO BE FILLED MANUALLY]``
-      highlighted in yellow, followed by suggested text in grey italic.
-    - No evidence quotes, no review flags, no review appendix.
-    """
-    doc = Document()
-    _configure_page(doc)
-    _set_document_font(doc)
-    _build_header(doc, logo_path)
-    _build_footer(doc)
-
-    ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
-
     _write_validation_intro_page(doc)
     if us_funded:
         _write_us_summary_sections_validation(doc, variables, ext_map)
     _write_cover_page(doc, variables, ext_map)
     _write_validation_main_body(doc, variables, ext_map)
-    _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm)
+    _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm, ext_map=ext_map)
+    _add_ai_disclaimer(doc)
 
     doc.save(output_path)
     return output_path
@@ -280,18 +268,19 @@ def _add_page_field(para, field_type: str) -> None:
 # ---------------------------------------------------------------------------
 
 _INTRO_GREY = RGBColor(0x55, 0x55, 0x55)
-_INTRO_BORDER_GREY = RGBColor(0xBB, 0xBB, 0xBB)
+_INTRO_ITALIC_PT = 10.5
+_INTRO_GREY_ITALIC_PT = 10
+_UHN_TEMPLATES_URL = "https://intranet.uhnresearch.ca/service/documents-and-forms"
 
 
 def _write_validation_intro_page(doc: Document) -> None:
-    """Introductory notes page for the validation-phase ICF (EC-facing)."""
+    """Introductory cover page explaining how to use the AI-generated draft."""
 
-    # ---- Title -----------------------------------------------------------------
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_before = Pt(18)
     p.paragraph_format.space_after = Pt(4)
-    r = p.add_run("AI-Generated ICF Draft: Reviewer Guide")
+    r = p.add_run("AI-Generated ICF Draft")
     r.font.name = _FONT
     r.font.size = Pt(14)
     r.bold = True
@@ -299,48 +288,108 @@ def _write_validation_intro_page(doc: Document) -> None:
 
     _add_blank(doc)
 
-    # ---- How to read the annotations ------------------------------------------
-    _intro_section_label(doc, "How to Read the Annotations")
+    _intro_section_label(doc, "How to Use This Document")
 
     _intro_body(
         doc,
-        "Each section in this document includes a short italic line directly "
-        "below the heading. This line summarises the extraction status for that section "
-        "and should be removed before submission.",
+        "This document was generated using AI and is intended as a starting point for "
+        "your initial draft. The AI is grounded in the protocol as the primary source "
+        "of truth; however, it may still produce inaccuracies or take details out of "
+        "context.",
+    )
+    _intro_body(
+        doc,
+        "Before submitting, you are responsible for reviewing and updating this "
+        "document to ensure it meets REB requirements.",
+    )
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
+    _intro_run(
+        p,
+        "Please use the UHN consent form templates as a reference for formatting and "
+        "required content: ",
+    )
+    _add_intro_hyperlink(p, _UHN_TEMPLATES_URL)
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
+    _intro_run(
+        p,
+        "As this is a beta version, we highly suggest cross-referencing against the "
+        "template before submitting the consent form in CAPCR.",
+        italic=True,
+        size=_INTRO_ITALIC_PT,
     )
 
     _add_blank(doc)
+    _intro_section_label(doc, "What you need to do:")
 
-    # ---- Status ---------------------------------------------------------------
-    _intro_section_label(doc, "Status")
+    for item in [
+        "Review all content and correct any errors or inconsistencies.",
+        "Ensure information accurately reflects the protocol.",
+        "Confirm formatting aligns with submission standards.",
+    ]:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.left_indent = Cm(0.8)
+        p.paragraph_format.first_line_indent = Cm(-0.5)
+        r = p.add_run("\u2022 " + item)
+        r.font.name = _FONT
+        r.font.size = Pt(_BODY_PT)
 
-    _intro_body(
-        doc,
-        "Indicates how completely the AI tool was able to populate the section from "
-        "the protocol:",
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.left_indent = Cm(0.8)
+    p.paragraph_format.first_line_indent = Cm(-0.5)
+    _intro_run(p, "\u2022 Remove any instructional text (including this cover page, ", bold=True)
+    _intro_run(
+        p,
+        "grey italic text",
+        bold=True,
+        italic=True,
+        grey=True,
+        size=_INTRO_GREY_ITALIC_PT,
     )
+    _intro_run(p, " and ", bold=True)
+    _intro_run(p, "highlighted text", bold=True, highlight=True)
+    _intro_run(p, ") before submitting.", bold=True)
 
-    status_entries: list[tuple[str, str]] = [
+    _add_blank(doc)
+    _intro_section_label(doc, "Section Status")
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
+    _intro_run(
+        p,
+        "Each section is labelled to show how much of the section the AI could "
+        "pre-populate ",
+    )
+    _intro_run(p, "based on information in the protocol", italic=True)
+    _intro_run(p, ":")
+
+    status_entries: list[tuple[str, str | None]] = [
         (
             "FOUND",
-            "The section was fully populated from the protocol. Review for accuracy "
-            "and plain-language quality.",
+            "The section was fully populated. Review for accuracy and plain-language quality.",
         ),
-        (
-            "PARTIAL",
-            "The section was partially populated. Some fields could not be identified "
-            "in the protocol and are marked [TO BE FILLED MANUALLY]. A note explaining "
-            "what is missing appears at the end of the section in grey italic.",
-        ),
+        ("PARTIAL", None),
         (
             "NOT_FOUND",
-            "No relevant information was located in the protocol. The section requires "
-            "manual completion by the study team.",
+            "No relevant information was located in the protocol. You must complete this section.",
         ),
         (
             "SKIPPED",
-            "This section is not expected to be found in a study protocol (e.g. contact "
-            "details, institutional boilerplate). It requires manual entry by the study team.",
+            "This information is not consistently available within a protocol, so the AI is "
+            "designed to skip it. It must be filled in by you, if needed.",
         ),
     ]
     for label, desc in status_entries:
@@ -352,35 +401,47 @@ def _write_validation_intro_page(doc: Document) -> None:
         rl.font.name = _FONT
         rl.font.size = Pt(_BODY_PT)
         rl.bold = True
-        rd = p.add_run(desc)
-        rd.font.name = _FONT
-        rd.font.size = Pt(_BODY_PT)
+        if desc is not None:
+            rd = p.add_run(desc)
+            rd.font.name = _FONT
+            rd.font.size = Pt(_BODY_PT)
+        else:
+            _intro_run(
+                p,
+                "Some information is missing. Look for [to be completed] for fields "
+                "requiring your updates. The ",
+            )
+            _intro_run(
+                p,
+                "grey italic note",
+                italic=True,
+                grey=True,
+                size=_INTRO_GREY_ITALIC_PT,
+            )
+            _intro_run(p, " at the end of the section explains what's missing.")
 
     _add_blank(doc)
-
-    # ---- Confidence -----------------------------------------------------------
-    _intro_section_label(doc, "Confidence")
+    _intro_section_label(doc, "Confidence Level")
 
     _intro_body(
         doc,
-        "Reflects the AI tool's own certainty in its extraction result:",
+        "It reflects how strongly the AI was able to match information to the protocol.",
     )
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
+    _intro_run(p, "Note: This is not a statistical measure of confidence.", italic=True)
 
-    _CONF_COLORS: dict[str, RGBColor] = {
-        "HIGH": RGBColor(0x1E, 0x82, 0x1E),    # dark green
-        "MEDIUM": RGBColor(0xC8, 0x82, 0x00),  # dark orange
-        "LOW": RGBColor(0xC8, 0x1E, 0x1E),     # dark red
-    }
-    confidence_entries: list[tuple[str, str]] = [
-        ("HIGH", "Strong, direct evidence found in the protocol."),
+    for label, desc in [
+        ("HIGH", "Information clearly matches the protocol."),
         (
             "MEDIUM",
-            "Evidence found but required interpretation or was partially ambiguous. "
+            "Information found, but required interpretation or was partially ambiguous. "
             "Closer review is recommended.",
         ),
-        ("LOW", "Weak or indirect evidence. The section should be carefully verified."),
-    ]
-    for label, desc in confidence_entries:
+        ("LOW", "Weak or indirect match. The section should be carefully verified."),
+    ]:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(2)
         p.paragraph_format.space_after = Pt(2)
@@ -389,42 +450,28 @@ def _write_validation_intro_page(doc: Document) -> None:
         rl.font.name = _FONT
         rl.font.size = Pt(_BODY_PT)
         rl.bold = True
-        rl.font.color.rgb = _CONF_COLORS[label]
         rd = p.add_run(desc)
         rd.font.name = _FONT
         rd.font.size = Pt(_BODY_PT)
 
     _add_blank(doc)
+    _intro_section_label(doc, "Flagged sections for Updating")
 
-    # ---- [TO BE FILLED MANUALLY] ----------------------------------------------
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(3)
-    rl = p.add_run("[TO BE FILLED MANUALLY]")
-    rl.font.name = _FONT
-    rl.font.size = Pt(_BODY_PT)
-    rl.bold = True
-    rl.font.highlight_color = WD_COLOR_INDEX.YELLOW
-
-    _intro_body(
-        doc,
-        "Highlighted in yellow throughout the document. Each instance marks a specific "
-        "field or sentence that the AI tool could not populate from the protocol. "
-        "The study team must supply this content before the ICF can be submitted. ",
-    )
+    _intro_run(p, "Sections highlighted in yellow", highlight=True)
+    _intro_run(p, " indicate missing information.")
+    _intro_body(doc, "You must address these areas before submitting the document.")
 
     _add_blank(doc)
-
-    # ---- Disclaimers ----------------------------------------------------------
     _intro_section_label(doc, "Important Notes")
 
     for note in [
-        "This document is an AI-generated draft and has not been reviewed or approved "
-        "by a regulatory body or ethics committee.",
-        "All content must be reviewed, verified, and approved by the study team and "
-        "qualified clinical research professionals before submission.",
-        "Extraction is based solely on the submitted protocol. Information absent from "
-        "the protocol will not appear in this draft.",
+        "This is an AI-generated draft and has not been reviewed or approved by REB "
+        "or any regulatory body",
+        "The study team is responsible for reviewing, verifying, and approving all content",
+        "The submitted protocol was the sole source of information for the generation of this draft",
     ]:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(2)
@@ -432,122 +479,8 @@ def _write_validation_intro_page(doc: Document) -> None:
         p.paragraph_format.left_indent = Cm(0.8)
         p.paragraph_format.first_line_indent = Cm(-0.5)
         r = p.add_run("\u2022 " + note)
-        r.font.name = _FONT
-        r.font.size = Pt(_SMALL_PT)
-        r.italic = True
-        r.font.color.rgb = _INTRO_GREY
-
-    doc.add_page_break()
-
-
-def _write_intro_page(doc: Document) -> None:
-    """Write an introductory notes page that precedes the main ICF content."""
-    # ---- Page title --------------------------------------------------------
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(18)
-    p.paragraph_format.space_after = Pt(6)
-    r = p.add_run("AI-Generated ICF: Important Notes")
-    r.font.name = _FONT
-    r.font.size = Pt(14)
-    r.bold = True
-    r.underline = True
-
-    _add_blank(doc)
-
-    # ---- Color coding legend -----------------------------------------------
-    _intro_section_label(doc, "Color Coding Legend")
-
-    _intro_body(
-        doc,
-        "Section headings and body text are color-coded by extraction confidence:",
-    )
-
-    _legend_entries: list[tuple[str, str, RGBColor]] = [
-        ("HIGH CONFIDENCE", "Content was reliably extracted from the protocol.", _CONFIDENCE_COLORS["HIGH"]),
-        ("MEDIUM CONFIDENCE", "Content was partially extracted or inferred; human review recommended.", _CONFIDENCE_COLORS["MEDIUM"]),
-        ("LOW CONFIDENCE", "Content could not be reliably extracted; requires careful review and completion.", _CONFIDENCE_COLORS["LOW"]),
-    ]
-    for label, desc, color in _legend_entries:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(1)
-        p.paragraph_format.left_indent = Cm(0.8)
-        r_label = p.add_run(label + ": ")
-        r_label.font.name = _FONT
-        r_label.font.size = Pt(_BODY_PT)
-        r_label.bold = True
-        r_label.font.color.rgb = color
-        r_desc = p.add_run(desc)
-        r_desc.font.name = _FONT
-        r_desc.font.size = Pt(_BODY_PT)
-        r_desc.font.color.rgb = _INTRO_GREY
-
-    _add_blank(doc)
-
-    # ---- Required sections note --------------------------------------------
-    _intro_section_label(doc, "Required Sections Not Found in Protocol")
-
-    _intro_body(
-        doc,
-        "All required ICF sections are included in this document, even when the "
-        "corresponding information could not be located in the study protocol. "
-        "For such sections, a brief suggested text is provided in small italic grey "
-        "font directly below the section heading. This suggested text is for guidance "
-        "only and must be reviewed, edited, and approved by the study team before use.",
-    )
-
-    _add_blank(doc)
-
-    # ---- Detailed draft reference ------------------------------------------
-    _intro_section_label(doc, "Detailed ICF Draft")
-
-    _intro_body(
-        doc,
-        "A separate detailed ICF draft (draft_icf.docx) is produced alongside this "
-        "clean version. The detailed draft contains additional information for each "
-        "section, including:",
-    )
-    for bullet in [
-        "Evidence citations with direct quotes and page references from the protocol",
-        "Extraction status and confidence scores",
-        "Validation issues flagged during quality checking",
-        "Suggested text for sections requiring manual completion",
-    ]:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Cm(1.2)
-        p.paragraph_format.first_line_indent = Cm(-0.5)
-        r = p.add_run("\u2022 " + bullet)
         r.font.name = _FONT
         r.font.size = Pt(_BODY_PT)
-        r.font.color.rgb = _INTRO_GREY
-
-    _add_blank(doc)
-
-    # ---- Disclaimers -------------------------------------------------------
-    _intro_section_label(doc, "Disclaimers")
-
-    for note in [
-        "This document was generated automatically by an AI system and has not been "
-        "reviewed or approved by a regulatory body or ethics committee.",
-        "All content must be reviewed, verified, and edited by qualified clinical "
-        "research professionals before submission or use with study participants.",
-        "The AI extraction is based solely on the provided study protocol. Information "
-        "not present in the protocol will not appear in the extracted content.",
-        "This tool does not constitute legal, medical, or regulatory advice.",
-    ]:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Cm(0.8)
-        p.paragraph_format.first_line_indent = Cm(-0.5)
-        r = p.add_run("\u2022 " + note)
-        r.font.name = _FONT
-        r.font.size = Pt(_SMALL_PT)
-        r.italic = True
-        r.font.color.rgb = _INTRO_GREY
 
     doc.add_page_break()
 
@@ -572,6 +505,63 @@ def _intro_body(doc: Document, text: str) -> None:
     r = p.add_run(text)
     r.font.name = _FONT
     r.font.size = Pt(_BODY_PT)
+
+
+def _intro_run(
+    para,
+    text: str,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+    highlight: bool = False,
+    grey: bool = False,
+    size: float | None = None,
+) -> None:
+    """Styled run for mixed-format intro paragraphs."""
+    r = para.add_run(text)
+    r.font.name = _FONT
+    r.font.size = Pt(size if size is not None else _BODY_PT)
+    r.bold = bold
+    r.italic = italic
+    if highlight:
+        r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    if grey:
+        r.font.color.rgb = _INTRO_GREY
+
+
+def _add_intro_hyperlink(para, url: str) -> None:
+    """Append a clickable hyperlink run to an intro paragraph."""
+    part = para.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    run = OxmlElement("w:r")
+    r_pr = OxmlElement("w:rPr")
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), _FONT)
+    r_fonts.set(qn("w:hAnsi"), _FONT)
+    r_pr.append(r_fonts)
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(int(_BODY_PT * 2)))
+    r_pr.append(sz)
+    colour = OxmlElement("w:color")
+    colour.set(qn("w:val"), "0563C1")
+    r_pr.append(colour)
+    underline = OxmlElement("w:u")
+    underline.set(qn("w:val"), "single")
+    r_pr.append(underline)
+    run.append(r_pr)
+
+    text_elem = OxmlElement("w:t")
+    text_elem.text = url
+    run.append(text_elem)
+    hyperlink.append(run)
+    para._p.append(hyperlink)
 
 
 # ---------------------------------------------------------------------------
@@ -608,25 +598,14 @@ def _write_us_summary_page_opening(doc: Document, ext_map: dict[str, ExtractionR
     rv.bold = False
 
 
-def _write_us_summary_sections(
-    doc: Document,
-    variables: list[TemplateVariable],
-    ext_map: dict[str, ExtractionResult],
-) -> None:
-    """Write the Summary of ICF block (sections 1.x) for US-funded studies."""
-    _write_us_summary_page_opening(doc, ext_map)
-    _write_us_summary_section_blocks(doc, variables, ext_map, validation=False)
-    doc.add_page_break()
-
-
 def _write_us_summary_sections_validation(
     doc: Document,
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
 ) -> None:
-    """US-funded summary block for the validation-phase ICF."""
+    """US-funded summary block (sections 1.x) for the draft ICF."""
     _write_us_summary_page_opening(doc, ext_map)
-    _write_us_summary_section_blocks(doc, variables, ext_map, validation=True)
+    _write_us_summary_section_blocks(doc, variables, ext_map)
     doc.add_page_break()
 
 
@@ -634,8 +613,6 @@ def _write_us_summary_section_blocks(
     doc: Document,
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
-    *,
-    validation: bool,
 ) -> None:
     """Write 1.1 body only (no extra heading), then 1.2–1.7 with sub-section headings."""
     summary_vars = [v for v in variables if v.section_id.startswith("1.")]
@@ -643,71 +620,36 @@ def _write_us_summary_section_blocks(
     rest_vars = [v for v in summary_vars if v.section_id != "1.1"]
 
     if var_11 is not None:
-        ext = ext_map.get("1.1")
-        if validation:
-            _write_us_summary_1_1_validation(doc, var_11, ext)
-        else:
-            _write_us_summary_1_1_clean(doc, var_11, ext)
+        _write_us_summary_1_1_validation(doc, var_11, ext_map.get("1.1"))
 
     last_sub_section: str | None = None
     for var in rest_vars:
         ext = ext_map.get(var.section_id)
 
-        if ext and ext.status == "ADAPTATION_SKIPPED":
-            continue
-
         content = _get_section_content(ext)
         if not content and not var.required:
             continue
 
-        confidence = ext.confidence if ext else None
-        color = None if validation else _CONFIDENCE_COLORS.get(confidence or "", None)
-
         if var.sub_section and var.sub_section != last_sub_section:
-            _add_subsection_heading(doc, var.sub_section, color=color)
+            _add_subsection_heading(doc, var.sub_section, color=None)
             last_sub_section = var.sub_section
         elif not var.sub_section:
             last_sub_section = None
 
-        if validation:
-            if ext is not None and ext.status in (
-                "FOUND",
-                "PARTIAL",
-                "NOT_FOUND",
-                "ERROR",
-                "SKIPPED",
-            ):
-                _add_validation_annotation(doc, ext)
-            if content:
-                _add_content_block(doc, content, color=None, highlight_markers=True)
-                if ext is not None and ext.status == "PARTIAL" and ext.notes:
-                    _add_partial_notes(doc, ext.notes)
-            else:
-                _add_validation_placeholder(doc, ext, var, optional=not var.required)
-        elif content:
-            _add_content_block(doc, content, color=color)
+        if ext is not None and ext.status in (
+            "FOUND",
+            "PARTIAL",
+            "NOT_FOUND",
+            "ERROR",
+            "SKIPPED",
+        ):
+            _add_validation_annotation(doc, ext)
+        if content:
+            _add_content_block(doc, content, color=None, highlight_markers=True)
+            if ext is not None and ext.status == "PARTIAL" and ext.notes:
+                _add_partial_notes(doc, ext.notes)
         else:
-            _add_placeholder(doc, ext, var)
-
-
-def _write_us_summary_1_1_clean(
-    doc: Document,
-    var: TemplateVariable,
-    ext: ExtractionResult | None,
-) -> None:
-    """Section 1.1 intro text only — no duplicate heading."""
-    if ext and ext.status == "ADAPTATION_SKIPPED":
-        return
-
-    content = _get_section_content(ext)
-    if not content and not var.required:
-        return
-
-    color = _CONFIDENCE_COLORS.get(ext.confidence if ext else "", None)
-    if content:
-        _add_content_block(doc, content, color=color)
-    else:
-        _add_placeholder(doc, ext, var)
+            _add_validation_placeholder(doc, ext, var, optional=not var.required)
 
 
 def _write_us_summary_1_1_validation(
@@ -716,9 +658,6 @@ def _write_us_summary_1_1_validation(
     ext: ExtractionResult | None,
 ) -> None:
     """Section 1.1 for validation ICF — content only, no heading."""
-    if ext and ext.status == "ADAPTATION_SKIPPED":
-        return
-
     content = _get_section_content(ext)
     if not content and not var.required:
         return
@@ -801,77 +740,15 @@ def _write_cover_page(
 # ---------------------------------------------------------------------------
 
 
-def _write_main_icf_body(
-    doc: Document,
-    variables: list[TemplateVariable],
-    ext_map: dict[str, ExtractionResult],
-) -> None:
-    body_vars = [
-        v
-        for v in variables
-        if not v.section_id.startswith("2.") and not v.section_id.startswith("1.")
-    ]
-    _write_body_sections(doc, body_vars, ext_map)
-
-
-def _write_body_sections(
-    doc: Document,
-    variables: list[TemplateVariable],
-    ext_map: dict[str, ExtractionResult],
-) -> None:
-    """Write grouped ICF body sections (headings, sub-sections, content)."""
-    last_heading: str | None = None
-    last_sub_section: str | None = None
-
-    for var in variables:
-        ext = ext_map.get(var.section_id)
-
-        # Adaptation-skipped sections are fully irrelevant — omit entirely.
-        if ext and ext.status == "ADAPTATION_SKIPPED":
-            continue
-
-        content = _get_section_content(ext)
-
-        # Optional sections with no usable content are silently omitted.
-        if not content and not var.required:
-            continue
-
-        confidence = ext.confidence if ext else None
-        color = _CONFIDENCE_COLORS.get(confidence or "", None)
-
-        # ---- Heading -------------------------------------------------------
-        if var.heading != last_heading:
-            if last_heading is not None:
-                _add_blank(doc)
-            _add_heading(doc, var.heading, color=color)
-            last_heading = var.heading
-            last_sub_section = None  # reset sub-section tracking
-
-        # ---- Sub-section ---------------------------------------------------
-        if var.sub_section and var.sub_section != last_sub_section:
-            _add_subsection_heading(doc, var.sub_section, color=color)
-            last_sub_section = var.sub_section
-        elif not var.sub_section:
-            last_sub_section = None
-
-        # ---- Content -------------------------------------------------------
-        if content:
-            _add_content_block(doc, content, color=color)
-        else:
-            # Required section — show a placeholder so the document is complete.
-            _add_placeholder(doc, ext, var)
-
-
 # ---------------------------------------------------------------------------
-# Validation-phase body (mirror of _write_body_sections, no colour coding)
+# Draft body (no colour coding; grey status annotations)
 # ---------------------------------------------------------------------------
 
 _ANNOTATION_GREY = RGBColor(0x88, 0x88, 0x88)
-_ANNOTATION_PT = _SMALL_PT
 
 
 def _add_partial_notes(doc: Document, notes: str) -> None:
-    """Grey italic PARTIAL explanation rendered after section content."""
+    """Grey italic status explanation rendered after section content."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(2)
     p.paragraph_format.space_after = Pt(3)
@@ -903,35 +780,11 @@ def _add_validation_placeholder(
     var: TemplateVariable | None,
     optional: bool = False,
 ) -> None:
-    """Yellow [TO BE FILLED MANUALLY] label + optional suggested text in grey italic.
+    """Bold yellow placeholder label + optional suggested text in grey italic."""
+    label = _resolve_section_placeholder_label(var, optional=optional)
+    _add_highlighted_placeholder(doc, label)
 
-    When *optional* is True (section is not required), the label reads
-    ``[TO BE FILLED MANUALLY IF RELEVANT]`` to signal that inclusion is
-    at the reviewer's discretion.
-
-    When *var* has no ``suggested_text`` but does have ``required_text``, the
-    required_text (which contains the template wording with placeholder markers)
-    is shown as the suggested hint so the reviewer has a concrete starting point.
-    """
-    label = "[TO BE FILLED MANUALLY IF RELEVANT]" if optional else "[TO BE FILLED MANUALLY]"
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(2)
-    r = p.add_run(label)
-    r.font.name = _FONT
-    r.font.size = Pt(_BODY_PT)
-    r.bold = True
-    r.font.highlight_color = WD_COLOR_INDEX.YELLOW
-
-    suggested = ""
-    if var:
-        if var.suggested_text:
-            suggested = _plain_suggested_text(var).strip()
-        elif var.required_text:
-            # Fall back to required_text (template wording with {{...}} markers)
-            # so the reviewer has a concrete starting point even when no
-            # dedicated suggested_text was authored for this section.
-            suggested = var.required_text.strip()
+    suggested = _section_suggested_text(var)
     if suggested:
         p2 = doc.add_paragraph()
         p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -953,7 +806,9 @@ def _write_validation_main_body(
     body_vars = [
         v
         for v in variables
-        if not v.section_id.startswith("2.") and not v.section_id.startswith("1.")
+        if not v.section_id.startswith("2.")
+        and not v.section_id.startswith("1.")
+        and v.section_id != SIGNATURE_CONSENT_SECTION_ID
     ]
     _write_validation_body(doc, body_vars, ext_map)
 
@@ -970,16 +825,13 @@ def _write_validation_body(
     for var in variables:
         ext = ext_map.get(var.section_id)
 
-        if ext and ext.status == "ADAPTATION_SKIPPED":
-            continue
-
         content = _get_section_content(ext)
 
         # Keep optional sections that have a meaningful extraction status so the
         # EC reviewer can see them and decide whether to fill them manually.
         # Only silently drop optional sections that were never attempted (ext is
         # None) or have an uninformative status (e.g. STANDARD_TEXT already
-        # handled above, ADAPTATION_SKIPPED already skipped above).
+        # handled above).
         if not content and not var.required:
             no_useful_status = ext is None or ext.status not in (
                 "NOT_FOUND",
@@ -1028,7 +880,13 @@ def _write_validation_body(
 # ---------------------------------------------------------------------------
 
 
-def _write_signature_pages(doc: Document, study_title: str, *, sdm: bool = False) -> None:
+def _write_signature_pages(
+    doc: Document,
+    study_title: str,
+    *,
+    sdm: bool = False,
+    ext_map: dict[str, ExtractionResult] | None = None,
+) -> None:
     doc.add_page_break()
 
     # TITLE line: "TITLE:" (plain) + " [title]" (bold) — matches approved ICF
@@ -1048,21 +906,8 @@ def _write_signature_pages(doc: Document, study_title: str, *, sdm: bool = False
     p.paragraph_format.space_after = Pt(0)
     _run(p, "CONSENT")
 
-    # Consent bullet items — explicit bullet character + hanging indent
-    agree_item = (
-        "I agree, or agree to allow the person I am responsible for, to take part in "
-        "this study."
-        if sdm
-        else "I agree to take part in this study."
-    )
-    _consent_items = [
-        "All of my questions have been answered",
-        "I allow access to medical records and related personal health information "
-        "as explained in this consent form",
-        "I do not give up any legal rights by signing this consent form,",
-        agree_item,
-    ]
-    for item in _consent_items:
+    consent_items = resolve_signature_consent_bullets(ext_map or {}, sdm=sdm)
+    for item in consent_items:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
@@ -1314,24 +1159,21 @@ def _add_table_block(
     _add_blank(doc)
 
 
-_MANUAL_MARKER = "[TO BE FILLED MANUALLY]"
-
-
 def _add_text_runs(
     p,
     text: str,
     color: RGBColor | None,
     highlight_markers: bool,
 ) -> None:
-    """Append runs to *p*, optionally highlighting ``[TO BE FILLED MANUALLY]`` in yellow."""
-    if not highlight_markers or _MANUAL_MARKER not in text:
+    """Append runs to *p*, highlighting ``[PLEASE COMPLETE]`` in bold yellow."""
+    if not highlight_markers or MARKER_PLEASE_COMPLETE not in text:
         r = p.add_run(text)
         r.font.name = _FONT
         r.font.size = Pt(_BODY_PT)
         if color is not None:
             r.font.color.rgb = color
         return
-    parts = text.split(_MANUAL_MARKER)
+    parts = text.split(MARKER_PLEASE_COMPLETE)
     for i, part in enumerate(parts):
         if part:
             r = p.add_run(part)
@@ -1340,7 +1182,7 @@ def _add_text_runs(
             if color is not None:
                 r.font.color.rgb = color
         if i < len(parts) - 1:
-            r = p.add_run(_MANUAL_MARKER)
+            r = p.add_run(MARKER_PLEASE_COMPLETE)
             r.font.name = _FONT
             r.font.size = Pt(_BODY_PT)
             r.bold = True
@@ -1359,8 +1201,7 @@ def _add_content_block(
     as proper Word tables.  Bullet lines become indented list items.  All other
     lines are rendered as justified body paragraphs.
     *color* colours all runs when provided (confidence colour-coding).
-    *highlight_markers* highlights ``[TO BE FILLED MANUALLY]`` in yellow within
-    the text — used for the validation-phase ICF.
+    *highlight_markers* highlights ``[PLEASE COMPLETE]`` in bold yellow within the text.
     """
     for kind, segment in _split_content(text):
         if kind == "table":
@@ -1388,49 +1229,6 @@ def _add_content_block(
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(3)
                 _add_text_runs(p, stripped, color, highlight_markers)
-
-
-def _add_placeholder(
-    doc: Document,
-    ext: ExtractionResult | None,
-    var: TemplateVariable | None = None,
-) -> None:
-    """Add a visible placeholder for a required section with no usable content.
-
-    When *var* carries suggested_text, that text is rendered below the
-    placeholder in a smaller grey italic style so the reviewer has a starting
-    point without cluttering the clean ICF layout.
-    """
-    reason = ""
-    if ext:
-        if ext.status == "SKIPPED":
-            reason = " (Not in protocol — requires manual entry)"
-        elif ext.status == "NOT_FOUND":
-            reason = " (Not found in protocol)"
-        elif ext.status == "ERROR":
-            reason = f" (Extraction error: {ext.error})"
-
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(2)
-    r = p.add_run(f"[TO BE COMPLETED{reason}]")
-    r.font.name = _FONT
-    r.font.size = Pt(_BODY_PT)
-    r.italic = True
-
-    if var and var.suggested_text:
-        suggested = _plain_suggested_text(var).strip()
-        if suggested:
-            p2 = doc.add_paragraph()
-            p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p2.paragraph_format.space_before = Pt(2)
-            p2.paragraph_format.space_after = Pt(3)
-            p2.paragraph_format.left_indent = Cm(0.5)
-            r2 = p2.add_run("Suggested text: " + suggested)
-            r2.font.name = _FONT
-            r2.font.size = Pt(_SMALL_PT)
-            r2.italic = True
-            r2.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
 
 def _apply_sig_tab_stops(para) -> None:
@@ -1521,6 +1319,50 @@ def _plain_suggested_text(var: TemplateVariable) -> str:
     if var.suggested_text_format == "html":
         return re.sub(r"<[^>]+>", " ", raw).strip()
     return raw
+
+
+def _resolve_section_placeholder_label(
+    var: TemplateVariable | None,
+    *,
+    optional: bool = False,
+) -> str:
+    if _section_suggested_text(var):
+        return MARKER_OPTIONAL_SUGGESTED if optional else MARKER_REQUIRED_SUGGESTED
+    return MARKER_PLEASE_COMPLETE
+
+
+def _add_highlighted_placeholder(doc: Document, label: str) -> None:
+    """Bold yellow-highlighted placeholder for sections requiring study-team input."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run(label)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+    r.bold = True
+    r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+
+def _section_suggested_text(var: TemplateVariable | None) -> str:
+    if not var:
+        return ""
+    if var.suggested_text:
+        return _plain_suggested_text(var).strip()
+    if var.required_text:
+        return var.required_text.strip()
+    return ""
+
+
+def _add_ai_disclaimer(doc: Document) -> None:
+    """Append the AI-use statement at the end of the document."""
+    _add_blank(doc)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(0)
+    r = p.add_run(_AI_DISCLAIMER)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
 
 
 def _get_section_content(ext: ExtractionResult | None) -> str | None:

@@ -222,7 +222,7 @@ def _build_combined_prompt(
         "GT content that goes beyond its task instructions or its evidence. The AI "
         "is evaluated on whether it correctly completed its task — not on whether "
         "it matches the GT word for word.\n\n"
-        "5. PLACEHOLDERS — [TO BE FILLED MANUALLY], {{field name}}, <<insert here>> "
+        "5. PLACEHOLDERS — [PLEASE COMPLETE], {{field name}}, <<insert here>> "
         "in the AI output mean the AI correctly acknowledged that information was "
         "not available. When the extraction notes confirm the information was not "
         "found in the protocol, treat placeholders as correct abstention — do NOT "

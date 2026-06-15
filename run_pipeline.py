@@ -297,17 +297,6 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "--skip-adaptation",
-        action="store_true",
-        help=(
-            "Skip the adaptation pass (Stage 4). "
-            "The adaptation pass extracts the Introduction and Why-Is-This-Study-Done "
-            "sections first, then uses those results to mark irrelevant optional sections "
-            "as skipped. With this flag all optional sections are attempted regardless. "
-            "Useful for faster single-section runs or debugging."
-        ),
-    )
-    parser.add_argument(
         "--skip-review",
         action="store_true",
         help=(
@@ -351,23 +340,12 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--validation-phase",
-        action="store_true",
-        help=(
-            "Generate a third output document (validation_icf_*.docx) formatted for "
-            "ethics coordinator (EC) review. This document has a clean cover page "
-            "(matching the final ICF) followed by a simplified body: status and "
-            "confidence shown in grey italic, [TO BE FILLED MANUALLY] highlighted "
-            "yellow, no evidence quotes, no review flags."
-        ),
-    )
-    parser.add_argument(
         "--us-funded",
         action="store_true",
         help=(
             "Study is funded or supported by a US federal agency (e.g. NIH, DHHS). "
             "Extracts Summary of Informed Consent Form sections (1.x) and inserts "
-            "them at the beginning of the draft, clean, and validation ICF documents, "
+            "them at the beginning of the draft and marked-up ICF documents, "
             "with the study title from section 2.1 above the summary and a page break "
             "before the main ICF body."
         ),
@@ -494,9 +472,7 @@ def main() -> int:
         skip_review=args.skip_review,
         skip_remediation=args.skip_remediation,
         remediate_high_only=args.remediate_high_only,
-        skip_adaptation=args.skip_adaptation,
         skip_harmonize=args.skip_harmonize,
-        validation_phase=args.validation_phase,
         us_funded=args.us_funded,
         sdm=args.sdm,
     )

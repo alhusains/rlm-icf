@@ -18,7 +18,6 @@ Design mirrors adapt.py / remediate.py:
   - Locked-phrase safety check before applying any revision (same as Stage 9).
   - Graceful failure: if a call fails or produces invalid JSON the original
     text is kept; the run never degrades.
-  - ADAPTATION_SKIPPED sections are excluded from each group automatically.
 """
 
 from __future__ import annotations
@@ -35,23 +34,59 @@ from rlm.clients import get_client
 # ---------------------------------------------------------------------------
 # Section groups
 #
-# Maps a short group key to an ordered list of section IDs.
-# All IDs in a group share the same top-level heading and may overlap.
-# Groups are processed only when at least _MIN_ACTIVE_SECTIONS of their
-# sections have usable extracted content (FOUND or PARTIAL with non-empty text).
+# Groups are DERIVED from the registry at runtime: any heading shared by
+# >= _MIN_GROUP_SIZE registry sections forms a group (parent + sub-sections,
+# e.g. all "WHAT ARE THE STUDY PROCEDURES?" sections). Deriving from the
+# registry keeps coverage in sync with both templates and any future edits,
+# instead of a hand-maintained map that drifts out of date.
+#
+# A group is only processed when at least _MIN_ACTIVE_SECTIONS of its members
+# have usable extracted content (FOUND or PARTIAL with non-empty text), so
+# standard-text-only groups (e.g. the contacts block) are skipped naturally.
 # ---------------------------------------------------------------------------
 
-HARMONIZATION_GROUPS: dict[str, list[str]] = {
-    # "What are the study procedures?" parent + all sub-sections
-    "12": ["12", "12.1", "12.2", "12.3", "12.4", "12.5.0", "12.6", "12.7", "12.8"],
-    # "Sample collection" parent + all sub-sections
-    "13": ["13", "13.1", "13.2", "13.3", "13.4", "13.5", "13.6"],
-}
+# Minimum number of registry sections sharing a heading to form a group.
+_MIN_GROUP_SIZE = 2
 
 # Minimum number of sections with non-empty content needed to bother harmonizing.
 _MIN_ACTIVE_SECTIONS = 2
 
 _CONTENT_STATUSES = frozenset({"FOUND", "PARTIAL"})
+
+# Top-level sections always excluded from harmonization. Section 1.x (US-funded
+# Summary of ICF) and 2.x (cover page) hold independent, self-contained fields
+# that must not be redistributed or de-duplicated across sub-sections.
+_HARMONIZE_EXCLUDED_TOPS = frozenset({"1", "2"})
+
+
+def _is_excluded_from_harmonization(section_id: str) -> bool:
+    """True for any section in groups 1.x or 2.x (incl. a bare '1' or '2')."""
+    top = (section_id or "").strip().split(".", 1)[0]
+    return top in _HARMONIZE_EXCLUDED_TOPS
+
+
+def derive_harmonization_groups(
+    variables: list[TemplateVariable],
+) -> dict[str, list[str]]:
+    """Group registry section IDs by shared heading (registry order preserved).
+
+    Returns a mapping of heading -> ordered list of section IDs for every
+    heading that is shared by at least ``_MIN_GROUP_SIZE`` sections. Sections
+    1.x and 2.x are excluded — they need no harmonization.
+    """
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for var in variables:
+        if _is_excluded_from_harmonization(var.section_id):
+            continue
+        key = (var.heading or "").strip()
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(var.section_id)
+    return {k: groups[k] for k in order if len(groups[k]) >= _MIN_GROUP_SIZE}
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +135,9 @@ class SectionGroupHarmonizer:
         patched_map: dict[str, ExtractionResult] = {e.section_id: e for e in patched}
         audit: dict[str, list[str]] = {}
 
-        for group_key, ids in HARMONIZATION_GROUPS.items():
+        harmonization_groups = derive_harmonization_groups(variables)
+
+        for group_key, ids in harmonization_groups.items():
             # Build ordered (var, ext) pairs for sections present in this run.
             pairs: list[tuple[TemplateVariable, ExtractionResult | None]] = []
             for sid in ids:
@@ -108,9 +145,6 @@ class SectionGroupHarmonizer:
                 if var is None:
                     continue
                 ext = ext_map.get(sid)
-                # Never include adaptation-skipped sections.
-                if ext is not None and ext.status == "ADAPTATION_SKIPPED":
-                    continue
                 pairs.append((var, ext))
 
             if not pairs:

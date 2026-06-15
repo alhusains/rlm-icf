@@ -85,6 +85,33 @@ st.markdown(
         margin-left: 10px;
         text-transform: uppercase;
     }
+    .recommended-use-box {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-left: 4px solid #0d6efd;
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin: 1rem 0 0.25rem 0;
+    }
+    .recommended-use-box h4 {
+        margin: 0 0 0.5rem 0;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #212529;
+    }
+    .recommended-use-box ul {
+        margin: 0;
+        padding-left: 1.25rem;
+    }
+    .recommended-use-box li {
+        margin-bottom: 0.35rem;
+        font-size: 0.92rem;
+        line-height: 1.45;
+        color: #495057;
+    }
+    .recommended-use-box li:last-child {
+        margin-bottom: 0;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -243,6 +270,24 @@ st.markdown(
 st.markdown(
     "Generate a structured draft Informed Consent Form (ICF) from a study protocol "
     "in minutes. Complete the steps below to get started."
+)
+
+st.markdown(
+    """
+    <div class="recommended-use-box">
+        <h4>Recommended Use</h4>
+        <ul>
+            <li>Limited to main ICFs (minimal risk and above minimal risk studies)</li>
+            <li>At this point, only protocols can be used as the source document</li>
+            <li>Currently optimized for non-complex, single-arm/cohort studies. Support
+                for more complex study designs is under development.</li>
+            <li>Excludes: CTO studies, the input of sponsor/CRO provided consent forms,
+                and the generation of other consent forms (e.g. optional consent forms,
+                pregnancy follow-up, etc.)</li>
+        </ul>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.divider()
@@ -516,11 +561,11 @@ if st.session_state.run_outputs:
     primary_by_prefix = {
         o[0]: o
         for o in st.session_state.run_outputs
-        if o[0].startswith(("final_icf_", "draft_icf_"))
+        if o[0].startswith(("draft_icf_", "marked_up_icf_"))
     }
     download_order = [
-        ("final_icf_", "Download the draft version of the consent form"),
-        ("draft_icf_", "Download the marked up version that includes evidence annotations"),
+        ("draft_icf_", "Download the draft version of the consent form"),
+        ("marked_up_icf_", "Download the marked up version that includes evidence annotations"),
     ]
     for prefix, label in download_order:
         match = next((item for name, item in primary_by_prefix.items() if name.startswith(prefix)), None)
@@ -548,7 +593,7 @@ if st.session_state.run_outputs:
         "The AI-generated draft is a starting point — not a finished document. "
         "Before submitting to CAPCR / the REB, your study team should:\n\n"
         "- Read the full draft carefully and verify all extracted information against the protocol\n"
-        "- Fill in any sections marked **[TO BE FILLED MANUALLY]**\n"
+        "- Fill in any sections marked **[PLEASE COMPLETE]** or highlighted in yellow\n"
         "- Revise language, formatting, and study-specific details as needed"
     )
 

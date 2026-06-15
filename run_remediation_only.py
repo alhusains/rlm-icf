@@ -11,10 +11,9 @@ re-extraction) and runs the late-stage passes in order:
 
 Writes updated outputs with a ``postprocessed_`` prefix:
 
+  marked_up_icf_postprocessed_<stem>.docx
   draft_icf_postprocessed_<stem>.docx
-  final_icf_postprocessed_<stem>.docx
   extraction_report_postprocessed_<stem>.json
-  validation_icf_postprocessed_<stem>.docx   (with --validation-phase)
 
 Usage:
     python run_remediation_only.py \\
@@ -213,11 +212,6 @@ def main() -> int:
             "See run_pipeline.py --remediate-high-only."
         ),
     )
-    parser.add_argument(
-        "--validation-phase",
-        action="store_true",
-        help="Also write validation_icf_postprocessed_<stem>.docx (EC review layout).",
-    )
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -358,18 +352,17 @@ def main() -> int:
     os.makedirs(args.output_dir, exist_ok=True)
     stem = _stem_from_report_path(args.report)
 
+    marked_up_path = os.path.join(args.output_dir, f"marked_up_icf_postprocessed_{stem}.docx")
     draft_path = os.path.join(args.output_dir, f"draft_icf_postprocessed_{stem}.docx")
-    final_path = os.path.join(args.output_dir, f"final_icf_postprocessed_{stem}.docx")
     report_path = os.path.join(args.output_dir, f"extraction_report_postprocessed_{stem}.json")
-    validation_path = os.path.join(args.output_dir, f"validation_icf_postprocessed_{stem}.docx")
 
-    from icf.assemble import generate_draft_docx, generate_report_json
-    from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
+    from icf.assemble import generate_marked_up_docx, generate_report_json
+    from icf.clean_icf import generate_draft_docx
 
-    print(f"\n[ASSEMBLE] Writing draft ICF  -> {draft_path}")
-    generate_draft_docx(extractions, validations, variables, draft_path, review_result)
+    print(f"\n[ASSEMBLE] Writing marked-up ICF -> {marked_up_path}")
+    generate_marked_up_docx(extractions, validations, variables, marked_up_path, review_result)
 
-    print(f"[ASSEMBLE] Writing report     -> {report_path}")
+    print(f"[ASSEMBLE] Writing report        -> {report_path}")
     generate_report_json(
         extractions,
         validations,
@@ -379,22 +372,13 @@ def main() -> int:
         remediation_result,
     )
 
-    print(f"[ASSEMBLE] Writing final ICF  -> {final_path}")
-    generate_clean_icf_docx(
+    print(f"[ASSEMBLE] Writing draft ICF     -> {draft_path}")
+    generate_draft_docx(
         extractions=extractions,
         variables=variables,
-        output_path=final_path,
+        output_path=draft_path,
         logo_path=logo_path,
     )
-
-    if args.validation_phase:
-        print(f"[ASSEMBLE] Writing validation ICF -> {validation_path}")
-        generate_validation_docx(
-            extractions=extractions,
-            variables=variables,
-            output_path=validation_path,
-            logo_path=logo_path,
-        )
 
     # ------------------------------------------------------------------
     # Summary
@@ -418,11 +402,9 @@ def main() -> int:
             print(f"  Failed:        {', '.join(r.section_id for r in failed)}")
     else:
         print("  Remediation:   skipped")
+    print(f"  Marked-up ICF: {marked_up_path}")
     print(f"  Draft ICF:     {draft_path}")
-    print(f"  Final ICF:     {final_path}")
     print(f"  Report:        {report_path}")
-    if args.validation_phase:
-        print(f"  Validation:    {validation_path}")
     print(sep)
 
     return 0

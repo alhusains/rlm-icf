@@ -43,11 +43,11 @@ RAG_SYSTEM_PROMPT = (
     "a clinician, a healthy volunteer, a caregiver, or any other person the study is enrolling "
     "— the protocol defines who. Write for whoever the protocol says is being recruited. "
     "It must contain ONLY: required ICF wording "
-    "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+    "(with placeholders filled), protocol information, and [PLEASE COMPLETE] for "
     "missing fields. NEVER include sentences about what was or wasn't found, references to "
     "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
     "  • Do NOT fabricate information. If a field cannot be answered from the passages,\n"
-    "    write [TO BE FILLED MANUALLY] or return status='NOT_FOUND'.\n"
+    "    write [PLEASE COMPLETE] or return status='NOT_FOUND'.\n"
     "  • Every evidence quote must be a verbatim substring from one of the retrieved passages.\n"
     "  • The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
     "  • Tables in retrieved passages contain important procedural data; read them carefully.\n\n"
@@ -88,7 +88,7 @@ _JSON_SCHEMA_TEMPLATE = """{
     "section_id": "{section_id}",
     "status": "FOUND" | "PARTIAL" | "NOT_FOUND",
     "answer": "Extracted information following UHN Plain Language Guidelines (participant-facing).",
-    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the retrieved passages, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
+    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the retrieved passages, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [PLEASE COMPLETE] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
     "evidence": [
         {"quote": "Exact verbatim quote from one of the retrieved passages", "page": "Page number from [Pages X-Y] label", "section": "Protocol section if identifiable"}
     ],
@@ -111,7 +111,7 @@ def _availability_note(var: TemplateVariable) -> str:
     if var.partially_in_protocol:
         return (
             "NOTE: Only some fields may be in the protocol. Extract what the retrieved "
-            "passages contain, mark unfound fields as [TO BE FILLED MANUALLY], "
+            "passages contain, mark unfound fields as [PLEASE COMPLETE], "
             "and use status='PARTIAL' if only partial information is found."
         )
     return (

@@ -823,6 +823,22 @@
       "required_text": "If you have questions about taking part in this study, <<or if you suffer a research-related injury,>> you can talk to the research team, or the person who is in charge of the study at this institution. That person is:\n\n____________________________     _________________________\nName                                                       Telephone\n\nIf you have questions about your rights as a participant or about ethical issues related to this study, call the Chair of the University Health Network Research Ethics Board (UHN REB) or the Research Ethics office number at 416-581-7849.  The REB is a group of people who oversee the ethical conduct of research studies. The UHN REB is not involved in the study at all. Everything that you discuss will be kept confidential.\n\nYou will be given a copy of this signed and dated consent form prior to participating in this study.",
       "suggested_text": "A copy of the consent form that you sign to enter the study may be included in your health record/hospital chart.",
       "suggested_text_format": "text"
+    },
+    {
+      "section_id": "32",
+      "heading": "Signature Page",
+      "sub_section": "Consent",
+      "required": true,
+      "complexity": [
+        "Easy mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": true,
+      "is_standard_text": false,
+      "instructions": "This is the consent attestation block that appears at the top of the signature page. The required_text contains the standard attestation bullets that the participant agrees to by signing; revise as applicable to the study.\n\nTwo of the bullets contain conditional clauses that should be included only when applicable to the study:\n- 'and transfer of specimens' — include in the medical-records bullet only if the study collects and transfers biological specimens.\n- The 'My family doctor/health care provider will/may be informed of study participation' bullet — include only if the family doctor/health care provider will be notified of participation. When included, choose 'will' or 'may' to match the study's standard practice.\n\nThe final agreement bullet uses standard participant wording ('I agree to take part in this study.'). Substitute-decision-maker wording on the signature page is handled separately by the study team when an SDM form is selected — do not infer SDM from the protocol.\n\n",
+      "required_text": "• All of my questions have been answered\n• I allow access to medical records <and transfer of specimens> and related personal health information as explained in this consent form\n• I do not give up any legal rights by signing this consent form,\n<Include the following bullet only if the family doctor/health care provider will be informed of study participation:>\n• My family doctor/health care provider {{will/may}} be informed of study participation\n• I agree to take part in this study.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
     }
   ]
 }

@@ -42,9 +42,10 @@ Validates each extraction:
 - **Quote verification**: Checks that cited quotes actually appear in the protocol
 - **Reading level**: Calculates Flesch-Kincaid grade level (target: Grade 6-8)
 
-### 5. Assemble (`icf/assemble.py`)
+### 5. Assemble (`icf/assemble.py`, `icf/clean_icf.py`)
 Generates output files:
-- **Draft ICF (DOCX)**: Structured ICF document with extracted text
+- **Draft ICF (DOCX)** (`icf/clean_icf.py`): UHN-branded ICF for study-team review
+- **Marked-up ICF (DOCX)** (`icf/assemble.py`): Annotated ICF with evidence, status, and review flags
 - **Extraction Report (JSON)**: Complete audit trail with evidence, confidence, and validation results
 
 ### 6. Orchestrate (`icf/pipeline.py`)
@@ -115,15 +116,21 @@ uv run python run_pipeline.py \
 
 ## Output
 
-The pipeline generates two files in the `output/` directory:
+The pipeline generates three files in the `output/` directory:
 
 ### 1. `draft_icf.docx`
-Structured ICF document with:
+UHN-branded draft ICF for study-team review (publication layout) with:
 - Extracted text for each section
-- Placeholders (`[TO BE FILLED MANUALLY]`) for unavailable information
-- Validation warnings for items requiring manual review
+- A grey italic status/confidence annotation below each heading
+- Placeholders (`[PLEASE COMPLETE]`, highlighted yellow) for unavailable information
 
-### 2. `extraction_report.json`
+### 2. `marked_up_icf.docx`
+Annotated ICF for traceability with:
+- Extracted text for each section
+- Per-section status, confidence, evidence quotes, and validation warnings
+- An appendix of plain-language review flags
+
+### 3. `extraction_report.json`
 Complete extraction audit trail containing:
 
 **Summary:**
@@ -171,7 +178,7 @@ Each section object contains:
 | `required_text` | Mandated ICF wording with `{{placeholders}}` |
 | `suggested_text` | Sample language with `<conditions>`, `<<blocks>>`, and `OR` alternatives |
 | `suggested_text_format` | `"text"` (default) or `"html"` for table content |
-| `adaptation_notes` | Runtime field — set by the dynamic-adaptation pass; `null` in base registry |
+| `adaptation_notes` | Runtime field — set by user-flag injections (US-funding, SDM); `null` in base registry |
 
 
 ## Iteration Budgets

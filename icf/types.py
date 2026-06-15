@@ -54,10 +54,10 @@ class TemplateVariable:
     is_standard_text: bool
     # "text" (default) or "html" — allows rich table content in JSON registry.
     suggested_text_format: str = "text"
-    # Injected at runtime by the dynamic-adaptation pass (None = no override).
+    # Runtime study-context note injected by user-selected flags (e.g. US-funding,
+    # SDM). Surfaced to the extraction prompt via prompt_runtime_context.
+    # None = no override.
     adaptation_notes: str | None = None
-    # Set True by the adaptation pass when this optional section is irrelevant for this study.
-    adaptation_skipped: bool = False
 
     def get_display_name(self) -> str:
         name = f"[{self.section_id}] {self.heading}"
@@ -251,21 +251,19 @@ class PipelineResult:
 
     extractions: list[ExtractionResult]
     validations: list[ValidationResult]
-    output_docx_path: str | None
-    clean_icf_path: str | None
+    marked_up_icf_path: str | None
+    draft_icf_path: str | None
     report_path: str | None
     summary: dict
     review_result: ReviewResult | None = None
     remediation_result: RemediationResult | None = None
-    validation_icf_path: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "extractions": [e.to_dict() for e in self.extractions],
             "validations": [v.to_dict() for v in self.validations],
-            "output_docx_path": self.output_docx_path,
-            "clean_icf_path": self.clean_icf_path,
-            "validation_icf_path": self.validation_icf_path,
+            "marked_up_icf_path": self.marked_up_icf_path,
+            "draft_icf_path": self.draft_icf_path,
             "report_path": self.report_path,
             "summary": self.summary,
             "review": self.review_result.to_dict() if self.review_result else None,

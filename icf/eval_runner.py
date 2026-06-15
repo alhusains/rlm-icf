@@ -499,7 +499,7 @@ class ICFEvalRunner:
         total = sum(
             1
             for e in extractions
-            if e.get("status") not in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT")
+            if e.get("status") not in ("SKIPPED", "STANDARD_TEXT")
             and e["section_id"] not in self.policy.skip_sections
             and len((e.get("filled_template") or e.get("answer") or "").split())
             >= self.policy.min_section_words
@@ -516,7 +516,7 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
+            if status in ("SKIPPED", "STANDARD_TEXT"):
                 continue
 
             # For NOT_FOUND sections the filled_template is intentionally empty —
@@ -787,7 +787,7 @@ class ICFEvalRunner:
                 continue
 
             status = ext.get("status", "")
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
+            if status in ("SKIPPED", "STANDARD_TEXT"):
                 continue
 
             # For NOT_FOUND sections the filled_template is intentionally empty —
@@ -1019,7 +1019,7 @@ class ICFEvalRunner:
         generated = set()
         for ext in extractions:
             status = ext.get("status", "")
-            if status not in ("SKIPPED", "ADAPTATION_SKIPPED", "STANDARD_TEXT"):
+            if status not in ("SKIPPED", "STANDARD_TEXT"):
                 text = ext.get("filled_template") or ext.get("answer") or ""
                 if text.strip():
                     generated.add(ext["section_id"])
@@ -1046,7 +1046,7 @@ class ICFEvalRunner:
         parts = []
         for ext in report.get("extractions", []):
             status = ext.get("status", "")
-            if status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+            if status == "SKIPPED":
                 continue
             text = ext.get("filled_template") or ext.get("answer") or ""
             if not text.strip():

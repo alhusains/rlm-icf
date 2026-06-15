@@ -1,22 +1,31 @@
 """
-Output generation: draft ICF DOCX and JSON extraction report.
+Output generation: marked-up ICF DOCX and JSON extraction report.
 
 Produces two artefacts:
-  1. draft_icf.docx   - A new Word document following the template structure.
-  2. extraction_report.json - Full structured data for programmatic use.
+  1. marked_up_icf.docx       - A Word document following the template structure,
+                                annotated with status, evidence, validation, and
+                                review flags for traceability.
+  2. extraction_report.json   - Full structured data for programmatic use.
 """
 
-import html as html_mod
 import json
 import re
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
-from icf.clean_icf import _get_study_title, _write_us_summary_page_opening
+from icf.clean_icf import (
+    MARKER_PLEASE_COMPLETE,
+    _add_ai_disclaimer,
+    _add_highlighted_placeholder,
+    _resolve_section_placeholder_label,
+    _section_suggested_text,
+    _write_us_summary_page_opening,
+)
+from icf.runtime_injections import SIGNATURE_CONSENT_SECTION_ID
 from icf.types import (
     ExtractionResult,
     RemediationResult,
@@ -35,11 +44,11 @@ _GREEN = RGBColor(30, 130, 30)
 
 
 # ------------------------------------------------------------------
-# 1. Draft ICF DOCX
+# 1. Marked-up ICF DOCX
 # ------------------------------------------------------------------
 
 
-def generate_draft_docx(
+def generate_marked_up_docx(
     extractions: list[ExtractionResult],
     validations: list[ValidationResult],
     variables: list[TemplateVariable],
@@ -47,17 +56,17 @@ def generate_draft_docx(
     review_result: ReviewResult | None = None,
     us_funded: bool = False,
 ) -> str:
-    """Create a new DOCX with all sections, filled content, and markers."""
+    """Create a marked-up DOCX with all sections, filled content, and markers."""
     doc = Document()
 
     # Title page
-    title = doc.add_heading("DRAFT - Informed Consent Form", level=0)
+    title = doc.add_heading("MARKED-UP - Informed Consent Form", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     note = doc.add_paragraph(
-        "This is an auto-generated draft. Sections marked "
-        "[TO BE FILLED MANUALLY] require human review and completion. "
-        "Evidence citations are included below each section for reference."
+        "This is an auto-generated, marked-up draft. Sections highlighted in yellow "
+        "require human review and completion. Evidence citations are included below "
+        "each section for reference."
     )
     _style_run(note.runs[0], size=9, italic=True, colour=_GREY)
 
@@ -72,15 +81,13 @@ def generate_draft_docx(
         doc.add_page_break()
 
     for var in variables:
-        if var.section_id.startswith("1."):
+        if var.section_id.startswith("1.") or var.section_id == SIGNATURE_CONSENT_SECTION_ID:
             continue
         ext = ext_map.get(var.section_id)
         val = val_map.get(var.section_id)
 
         # Omit optional sections that were not found / not applicable.
         # Required sections always appear so the human reviewer knows to fill them.
-        # ADAPTATION_SKIPPED sections always appear regardless of required status so
-        # the study team can review and confirm the irrelevance decision.
         if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
             continue
 
@@ -114,6 +121,8 @@ def generate_draft_docx(
                         sfp = doc.add_paragraph()
                         sfr = sfp.add_run(f"    Suggested fix: {flag.suggested_fix}")
                         _style_run(sfr, size=9, colour=colour)
+
+    _add_ai_disclaimer(doc)
 
     doc.save(output_path)
     return output_path
@@ -206,17 +215,13 @@ def _write_draft_section(
         "STANDARD_TEXT": _GREEN,
         "NOT_FOUND": _RED,
         "SKIPPED": _GREY,
-        "ADAPTATION_SKIPPED": _GREY,
         "ERROR": _RED,
     }.get(ext.status, _GREY)
-    if ext.status == "ADAPTATION_SKIPPED":
-        badge = "Status: SKIPPED — not relevant to this study"
-    else:
-        badge = f"Status: {ext.status}"
-        if ext.confidence and ext.confidence != "N/A":
-            badge += f"  |  Confidence: {ext.confidence}"
-        if ext.error:
-            badge += f"  |  Error: {ext.error}"
+    badge = f"Status: {ext.status}"
+    if ext.confidence and ext.confidence != "N/A":
+        badge += f"  |  Confidence: {ext.confidence}"
+    if ext.error:
+        badge += f"  |  Error: {ext.error}"
     _add_status_line(doc, badge, colour)
 
     if ext.status in ("FOUND", "PARTIAL", "STANDARD_TEXT"):
@@ -229,13 +234,13 @@ def _write_draft_section(
             _style_run(r, size=9, colour=_ORANGE, italic=True)
 
     elif ext.status in ("NOT_FOUND", "SKIPPED"):
-        p = doc.add_paragraph()
-        r = p.add_run("[TO BE FILLED MANUALLY]")
-        _style_run(r, size=11, colour=_RED, bold=True)
-        if var.suggested_text:
+        label = _resolve_section_placeholder_label(var, optional=not var.required)
+        _add_highlighted_placeholder(doc, label)
+        suggested = _section_suggested_text(var)
+        if suggested:
             sg = doc.add_paragraph()
-            sr = sg.add_run("Suggested text: " + _plain_suggested_text(var)[:800])
-            _style_run(sr, size=9, colour=_GREY, italic=True)
+            sr = sg.add_run("Suggested text: " + suggested[:800])
+            _style_run(sr, size=10, colour=_GREY, italic=True)
 
     elif ext.status == "ERROR":
         p = doc.add_paragraph()
@@ -373,6 +378,25 @@ def _add_docx_table(doc: Document, rows: list[list[str]], colour: RGBColor | Non
     doc.add_paragraph()
 
 
+def _add_content_runs(para, text: str) -> None:
+    """Render body text, highlighting [PLEASE COMPLETE] in bold yellow."""
+    if MARKER_PLEASE_COMPLETE not in text:
+        r = para.add_run(text)
+        _style_run(r, size=11)
+        return
+    parts = text.split(MARKER_PLEASE_COMPLETE)
+    for i, part in enumerate(parts):
+        if part:
+            r = para.add_run(part)
+            _style_run(r, size=11)
+        if i < len(parts) - 1:
+            r = para.add_run(MARKER_PLEASE_COMPLETE)
+            r.font.name = "Arial"
+            r.font.size = Pt(11)
+            r.bold = True
+            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+
 def _add_content(doc: Document, text: str) -> None:
     """Render text that may contain embedded Markdown tables into the document."""
     for kind, segment in _split_content(text):
@@ -381,23 +405,18 @@ def _add_content(doc: Document, text: str) -> None:
             if rows:
                 _add_docx_table(doc, rows)
                 continue
-        # Plain text fallback
-        if segment.strip():
-            doc.add_paragraph(segment.strip())
+        for line in segment.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            p = doc.add_paragraph()
+            _add_content_runs(p, stripped)
 
 
 def _add_status_line(doc: Document, text: str, colour: RGBColor) -> None:
     p = doc.add_paragraph()
     r = p.add_run(text)
     _style_run(r, size=8, colour=colour)
-
-
-def _plain_suggested_text(var: TemplateVariable) -> str:
-    """Return suggested_text as plain text, stripping HTML tags when format is 'html'."""
-    raw = html_mod.unescape(var.suggested_text)
-    if var.suggested_text_format == "html":
-        return re.sub(r"<[^>]+>", " ", raw).strip()
-    return raw
 
 
 def _style_run(
