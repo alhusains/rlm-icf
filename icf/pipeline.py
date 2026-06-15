@@ -1,38 +1,29 @@
 """
 ICF Pipeline orchestrator.
 
-Coordinates all stages: ingest -> registry -> extract -> adapt -> validate -> assemble.
+Coordinates all stages: ingest -> registry -> inject -> extract -> harmonize ->
+validate -> review -> remediate -> assemble.
 
-Extraction runs in two phases:
-  Phase A  Extract "trigger" sections (Introduction §3, Why Is This Study
-           Being Done §6) first.
-  Adapt    A lightweight LLM pass reviews the trigger-section content and
-           marks irrelevant optional sections as adaptation_skipped so they
-           are neither extracted nor written to the draft ICF.
-  Phase B  Extract all remaining sections using the adapted registry.
-
-The adapted registry is saved to <output_dir>/adapted_registry.json after
-every run so the adaptation decisions are auditable.
+Before extraction, user-selected flags (e.g. US federal funding, SDM) inject
+study-context notes into specific sections via apply_runtime_injections. All
+sections are then extracted in a single pass.
 """
 
-import json
 import os
 import time
 
-from icf.adapt import ADAPTATION_TRIGGER_IDS, build_adapted_registry
-from icf.runtime_injections import (
-    StudyRuntimeFlags,
-    apply_post_adaptation_injections,
-    apply_pre_extraction_injections,
-)
-from icf.assemble import generate_draft_docx, generate_report_json
-from icf.clean_icf import generate_clean_icf_docx, generate_validation_docx
+from icf.assemble import generate_marked_up_docx, generate_report_json
+from icf.clean_icf import generate_draft_docx
 from icf.debug_logger import ICFDebugLogger
 from icf.extract import ExtractionEngine
 from icf.harmonize import SectionGroupHarmonizer
 from icf.ingest import load_protocol
 from icf.registry import load_template_registry
 from icf.remediate import RemediationEngine, _is_remediable_flag, _is_remediable_medium
+from icf.runtime_injections import (
+    StudyRuntimeFlags,
+    apply_runtime_injections,
+)
 from icf.types import (
     ExtractionResult,
     PipelineResult,
@@ -91,9 +82,7 @@ class ICFPipeline:
         skip_review: bool = False,
         skip_remediation: bool = False,
         remediate_high_only: bool = False,
-        skip_adaptation: bool = False,
         skip_harmonize: bool = False,
-        validation_phase: bool = False,
         us_funded: bool = False,
         sdm: bool = False,
     ):
@@ -130,9 +119,7 @@ class ICFPipeline:
         self.skip_review = skip_review
         self.skip_remediation = skip_remediation
         self.remediate_high_only = remediate_high_only
-        self.skip_adaptation = skip_adaptation
         self.skip_harmonize = skip_harmonize
-        self.validation_phase = validation_phase
         self.us_funded = us_funded
         self.sdm = sdm
         self._runtime_flags = StudyRuntimeFlags(us_funded=us_funded, sdm=sdm)
@@ -187,10 +174,11 @@ class ICFPipeline:
             f"{len(skippable)} will be skipped (not in protocol)."
         )
 
-        for msg in apply_pre_extraction_injections(variables, self._runtime_flags):
+        # -- Stage 2.5: Runtime section injections (user-selected flags) ------
+        for msg in apply_runtime_injections(variables, self._runtime_flags):
             print(f"[REGISTRY] {msg}")
 
-        # -- Stage 3+4+5: Two-phase extract with adaptation ------------------
+        # -- Stage 3: Extract --------------------------------------------------
         debug_logger: ICFDebugLogger | None = None
         if self.debug_log_dir:
             if self.extraction_backend != "rlm":
@@ -205,71 +193,17 @@ class ICFPipeline:
         print(f"[EXTRACT] Extraction backend: {self.extraction_backend.upper()}")
         engine = self._build_engine(debug_logger, protocol)
 
-        # Split variables into trigger (adaptation seeds) and the rest.
-        trigger_ids_in_run = ADAPTATION_TRIGGER_IDS & {v.section_id for v in variables}
-        trigger_vars = [v for v in variables if v.section_id in trigger_ids_in_run]
-        non_trigger_vars = [v for v in variables if v.section_id not in trigger_ids_in_run]
+        # Injections mutate the registry variables in place, so the same objects
+        # carry the runtime notes into both extraction and document assembly.
+        final_variables = all_variables
 
         total = len(variables)
         extractions: list[ExtractionResult] = []
         idx = 0  # running display counter
 
         try:
-            # -- Phase A: trigger sections (Introduction + Why Is This Study Done)
-            if trigger_vars:
-                print(
-                    f"\n[EXTRACT] Phase A: {len(trigger_vars)} trigger section(s) "
-                    f"(adaptation seeds: {sorted(trigger_ids_in_run)})"
-                )
-            early_results: list[ExtractionResult] = []
-            for var in trigger_vars:
-                idx += 1
-                self._print_pre_extraction(idx, total, var)
-                result = engine.extract_variable(protocol.full_text, var)
-                extractions.append(result)
-                early_results.append(result)
-                self._print_extraction_status(idx, total, result)
-
-            # -- Adaptation pass
-            if self.skip_adaptation:
-                print("\n[ADAPT] Skipped (--skip-adaptation).")
-                adapted_non_trigger = non_trigger_vars
-            elif trigger_vars and early_results:
-                n_optional = sum(1 for v in non_trigger_vars if not v.required)
-                print(
-                    f"\n[ADAPT] Running adaptation pass "
-                    f"({n_optional} optional candidate section(s)) ..."
-                )
-                adapted_non_trigger = build_adapted_registry(
-                    variables=non_trigger_vars,
-                    early_results=early_results,
-                    model_name=self.model_name,
-                    backend=self.backend,
-                    backend_kwargs=self.backend_kwargs,
-                )
-                n_skipped = sum(1 for v in adapted_non_trigger if v.adaptation_skipped)
-                print(f"[ADAPT] {n_skipped} optional section(s) marked for skipping.")
-            else:
-                adapted_non_trigger = non_trigger_vars
-
-            for msg in apply_post_adaptation_injections(
-                adapted_non_trigger, self._runtime_flags
-            ):
-                print(f"[REGISTRY] {msg}")
-
-            # Merge adaptations back so all_variables stays intact for the DOCX
-            adapted_map: dict[str, TemplateVariable] = {v.section_id: v for v in trigger_vars}
-            adapted_map.update({v.section_id: v for v in adapted_non_trigger})
-            final_variables = [adapted_map.get(v.section_id, v) for v in all_variables]
-
-            # Save the adapted registry for transparency / auditing
-            os.makedirs(self.output_dir, exist_ok=True)
-            self._save_adapted_registry(list(adapted_map.values()), self.output_dir)
-
-            # -- Phase B: remaining sections (using adapted registry)
-            if non_trigger_vars:
-                print(f"\n[EXTRACT] Phase B: {len(adapted_non_trigger)} remaining section(s)")
-            for var in adapted_non_trigger:
+            print(f"\n[EXTRACT] Extracting {total} section(s) ...")
+            for var in variables:
                 idx += 1
                 self._print_pre_extraction(idx, total, var)
                 result = engine.extract_variable(protocol.full_text, var)
@@ -281,9 +215,6 @@ class ICFPipeline:
                 f"\n[EXTRACT] Interrupted after {len(extractions)}/{total} "
                 "sections. Saving partial results ..."
             )
-            # Ensure final_variables is defined even on early exit
-            if "final_variables" not in dir():
-                final_variables = all_variables
 
         # -- Stage 5.5: Section-group harmonization (optional) ---------------
         if not self.skip_harmonize:
@@ -322,10 +253,9 @@ class ICFPipeline:
         )
 
         stem = self._output_stem()
-        docx_path = os.path.join(self.output_dir, f"draft_icf_{stem}.docx")
+        marked_up_docx_path = os.path.join(self.output_dir, f"marked_up_icf_{stem}.docx")
         json_path = os.path.join(self.output_dir, f"extraction_report_{stem}.json")
-        clean_docx_path = os.path.join(self.output_dir, f"final_icf_{stem}.docx")
-        validation_docx_path = os.path.join(self.output_dir, f"validation_icf_{stem}.docx")
+        draft_docx_path = os.path.join(self.output_dir, f"draft_icf_{stem}.docx")
 
         # -- Stage 8: Review (optional plain-language annotation pass) --------
         review_result: ReviewResult | None = None
@@ -400,17 +330,17 @@ class ICFPipeline:
                 print("\n[REMEDIATE] Skipped (--skip-remediation).")
 
         # -- Write outputs (now that review_result and remediation are available) --
-        print(f"\n[ASSEMBLE] Writing draft ICF -> {docx_path}")
-        generate_draft_docx(
+        print(f"\n[ASSEMBLE] Writing marked-up ICF -> {marked_up_docx_path}")
+        generate_marked_up_docx(
             extractions,
             validations,
             final_variables,
-            docx_path,
+            marked_up_docx_path,
             review_result,
             us_funded=self.us_funded,
         )
 
-        print(f"[ASSEMBLE] Writing report    -> {json_path}")
+        print(f"[ASSEMBLE] Writing report       -> {json_path}")
         generate_report_json(
             extractions, validations, summary, json_path, review_result, remediation_result
         )
@@ -419,39 +349,25 @@ class ICFPipeline:
         _logo_candidate = os.path.join(os.path.dirname(self.template_path) or ".", "UHN_logo.png")
         logo_path = _logo_candidate if os.path.isfile(_logo_candidate) else None
 
-        print(f"[ASSEMBLE] Writing clean ICF -> {clean_docx_path}")
-        generate_clean_icf_docx(
+        print(f"[ASSEMBLE] Writing draft ICF    -> {draft_docx_path}")
+        generate_draft_docx(
             extractions=extractions,
             variables=final_variables,
-            output_path=clean_docx_path,
+            output_path=draft_docx_path,
             logo_path=logo_path,
             us_funded=self.us_funded,
             sdm=self.sdm,
         )
 
-        validation_path_out: str | None = None
-        if self.validation_phase:
-            print(f"[ASSEMBLE] Writing validation ICF -> {validation_docx_path}")
-            generate_validation_docx(
-                extractions=extractions,
-                variables=final_variables,
-                output_path=validation_docx_path,
-                logo_path=logo_path,
-                us_funded=self.us_funded,
-                sdm=self.sdm,
-            )
-            validation_path_out = validation_docx_path
-
         result = PipelineResult(
             extractions=extractions,
             validations=validations,
-            output_docx_path=docx_path,
-            clean_icf_path=clean_docx_path,
+            marked_up_icf_path=marked_up_docx_path,
+            draft_icf_path=draft_docx_path,
             report_path=json_path,
             summary=summary,
             review_result=review_result,
             remediation_result=remediation_result,
-            validation_icf_path=validation_path_out,
         )
 
         self.print_summary(result)
@@ -548,9 +464,7 @@ class ICFPipeline:
     def _print_pre_extraction(idx: int, total: int, var: TemplateVariable) -> None:
         display = var.get_display_name()
         label = var.get_complexity_label()
-        if var.adaptation_skipped:
-            print(f"[EXTRACT] [{idx}/{total}] ADAPT_SKIP: {display}")
-        elif var.is_standard_text:
+        if var.is_standard_text:
             print(f"[EXTRACT] [{idx}/{total}] STD_TEXT: {display}")
         elif not var.is_in_protocol and not var.partially_in_protocol:
             print(f"[EXTRACT] [{idx}/{total}] SKIP: {display} (Not in protocol)")
@@ -559,7 +473,7 @@ class ICFPipeline:
 
     @staticmethod
     def _print_extraction_status(idx: int, total: int, ext: ExtractionResult) -> None:
-        if ext.status in ("SKIPPED", "ADAPTATION_SKIPPED"):
+        if ext.status == "SKIPPED":
             print(f"[EXTRACT] [{idx}/{total}]  -> {ext.status}")
         elif ext.status == "STANDARD_TEXT":
             print(f"[EXTRACT] [{idx}/{total}]  -> STANDARD_TEXT")
@@ -586,25 +500,6 @@ class ICFPipeline:
         return f"{self.extraction_backend}_{safe_stem}"
 
     @staticmethod
-    def _save_adapted_registry(variables: list[TemplateVariable], output_dir: str) -> None:
-        """Write a concise JSON summary of adaptation decisions to the output dir."""
-        path = os.path.join(output_dir, "adapted_registry.json")
-        data = [
-            {
-                "section_id": v.section_id,
-                "heading": v.heading,
-                "sub_section": v.sub_section,
-                "required": v.required,
-                "adaptation_skipped": v.adaptation_skipped,
-                "adaptation_notes": v.adaptation_notes,
-            }
-            for v in sorted(variables, key=lambda v: v.section_id)
-        ]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"[ADAPT] Adapted registry saved -> {path}")
-
-    @staticmethod
     def _build_summary(
         extractions: list[ExtractionResult],
         validations: list[ValidationResult],
@@ -618,7 +513,6 @@ class ICFPipeline:
             "NOT_FOUND": 0,
             "SKIPPED": 0,
             "STANDARD_TEXT": 0,
-            "ADAPTATION_SKIPPED": 0,
             "ERROR": 0,
         }
         for e in extractions:
@@ -633,7 +527,6 @@ class ICFPipeline:
             "not_found": counts["NOT_FOUND"],
             "skipped": counts["SKIPPED"],
             "standard_text": counts["STANDARD_TEXT"],
-            "adaptation_skipped": counts["ADAPTATION_SKIPPED"],
             "errors": counts["ERROR"],
             "validation_issues": sum(len(v.issues) for v in validations),
             "elapsed_seconds": round(elapsed, 1),
@@ -652,7 +545,6 @@ class ICFPipeline:
         print(f"  NOT_FOUND:           {s['not_found']}")
         print(f"  SKIPPED:             {s['skipped']}")
         print(f"  STANDARD_TEXT:       {s['standard_text']}")
-        print(f"  ADAPTATION_SKIPPED:  {s.get('adaptation_skipped', 0)}")
         print(f"  ERRORS:              {s['errors']}")
         print(f"  Validation issues:   {s['validation_issues']}")
         print(f"  Review flags:        {s.get('review_flags', 'N/A (skipped)')}")
@@ -662,12 +554,10 @@ class ICFPipeline:
             print(f"  Sections patched:    {n_p}/{n_t}")
         print(f"  Wall time:           {s['elapsed_seconds']}s")
         print(sep)
-        if result.output_docx_path:
-            print(f"  Draft ICF:        {result.output_docx_path}")
-        if result.clean_icf_path:
-            print(f"  Clean ICF:        {result.clean_icf_path}")
-        if result.validation_icf_path:
-            print(f"  Validation ICF:   {result.validation_icf_path}")
+        if result.draft_icf_path:
+            print(f"  Draft ICF:        {result.draft_icf_path}")
+        if result.marked_up_icf_path:
+            print(f"  Marked-up ICF:    {result.marked_up_icf_path}")
         if result.report_path:
             print(f"  Report:           {result.report_path}")
         print(sep)

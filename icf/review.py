@@ -11,6 +11,8 @@ Standard-text sections (is_standard_text=True) are completely protected:
   2. Their section IDs are listed explicitly in the prompt header.
   3. Any flags referencing protected section IDs are silently dropped in
      _parse_review_response() as a final backstop.
+  4. Flags whose flagged_text overlaps locked literal phrases from required_text
+     are also dropped (same extract_locked_phrases logic as remediation).
 
 Design mirrors adapt.py: get_client() once, single direct LLM call (no REPL),
 graceful failure returns an empty ReviewResult rather than raising.
@@ -21,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 
+from icf.remediate_prompts import extract_locked_phrases
 from icf.review_prompts import build_icf_document_for_review, build_review_messages
 from icf.types import ExtractionResult, ReviewFlag, ReviewResult, TemplateVariable
 from rlm.clients import get_client
@@ -73,7 +76,7 @@ class ReviewEngine:
         messages = build_review_messages(icf_document, standard_text_ids)
 
         for attempt in range(1, self.max_retries + 1):
-            result = self._call_llm(messages, standard_text_ids)
+            result = self._call_llm(messages, standard_text_ids, variables, extractions)
             if result is not None:
                 return result
             if attempt < self.max_retries:
@@ -85,6 +88,8 @@ class ReviewEngine:
         self,
         messages: list[dict],
         standard_text_ids: set[str],
+        variables: list[TemplateVariable],
+        extractions: list[ExtractionResult],
     ) -> ReviewResult | None:
         """Issue the LLM call and parse the JSON response."""
         try:
@@ -97,7 +102,7 @@ class ReviewEngine:
             preview = raw[:600] if raw else "(empty)"
             print(f"[REVIEW] Raw response ({len(raw) if raw else 0} chars):\n{preview}")
 
-        return _parse_review_response(raw, standard_text_ids)
+        return _parse_review_response(raw, standard_text_ids, variables, extractions)
 
 
 # ---------------------------------------------------------------------------
@@ -105,11 +110,49 @@ class ReviewEngine:
 # ---------------------------------------------------------------------------
 
 
-def _parse_review_response(raw: str, standard_text_ids: set[str]) -> ReviewResult | None:
+def _build_locked_phrases_by_section(
+    variables: list[TemplateVariable],
+    extractions: list[ExtractionResult],
+) -> dict[str, list[str]]:
+    ext_map = {e.section_id: e for e in extractions}
+    locked: dict[str, list[str]] = {}
+    for var in variables:
+        if not var.required_text or not var.required_text.strip():
+            continue
+        ext = ext_map.get(var.section_id)
+        filled = (ext.filled_template or ext.answer or "") if ext else ""
+        phrases = extract_locked_phrases(var.required_text, filled)
+        if phrases:
+            locked[var.section_id] = phrases
+    return locked
+
+
+def _flag_targets_locked_required_text(flagged_text: str, locked_phrases: list[str]) -> bool:
+    excerpt = flagged_text.strip()
+    if not excerpt or not locked_phrases:
+        return False
+    excerpt_lower = excerpt.lower()
+    for phrase in locked_phrases:
+        p = phrase.strip()
+        if not p:
+            continue
+        p_lower = p.lower()
+        if excerpt_lower in p_lower or p_lower in excerpt_lower:
+            return True
+    return False
+
+
+def _parse_review_response(
+    raw: str,
+    standard_text_ids: set[str],
+    variables: list[TemplateVariable],
+    extractions: list[ExtractionResult],
+) -> ReviewResult | None:
     """Extract ReviewResult from the LLM response.
 
     Tries three strategies: direct parse, markdown fence, outermost { ... }.
-    Filters out any flags targeting protected (standard-text) sections.
+    Filters out any flags targeting protected (standard-text) sections or locked
+    literal phrases from required_text.
     Returns None only if JSON cannot be extracted at all.
     """
     if not raw:
@@ -119,6 +162,8 @@ def _parse_review_response(raw: str, standard_text_ids: set[str]) -> ReviewResul
     if data is None or not isinstance(data, dict):
         return None
 
+    locked_by_section = _build_locked_phrases_by_section(variables, extractions)
+
     flags: list[ReviewFlag] = []
     for f in data.get("flags", []):
         if not isinstance(f, dict):
@@ -127,10 +172,14 @@ def _parse_review_response(raw: str, standard_text_ids: set[str]) -> ReviewResul
         # Safety backstop: drop any flag targeting a protected section.
         if section_id in standard_text_ids:
             continue
+        flagged_text = str(f.get("flagged_text", ""))
+        section_locked = locked_by_section.get(section_id, [])
+        if _flag_targets_locked_required_text(flagged_text, section_locked):
+            continue
         flags.append(
             ReviewFlag(
                 section_id=section_id,
-                flagged_text=str(f.get("flagged_text", "")),
+                flagged_text=flagged_text,
                 issue_type=str(f.get("issue_type", "UNCLEAR")),
                 suggestion=str(f.get("suggestion", "")),
                 severity=str(f.get("severity", "LOW")),

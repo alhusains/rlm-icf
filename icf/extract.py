@@ -61,6 +61,10 @@ def _build_icf_system_prompt(protocol_length: int) -> str:
         "  for b in ['not found in', 'study documents', 'cannot be found',\n"
         "            'the protocol does not', 'the protocol doesn', 'protocol does not clearly']:\n"
         "      if b in ft.lower(): issues.append('Meta-commentary: ' + b)\n"
+        "  _ev = result_dict.get('evidence', []) or []\n"
+        "  _uniq = {' '.join(str(e.get('quote', '')).lower().split()) for e in _ev if e.get('quote')}\n"
+        "  if result_dict.get('status') in ('FOUND', 'PARTIAL') and len(ft.strip()) > 200 and len(_uniq) < 2:\n"
+        "      issues.append('Sparse evidence: add a verbatim quote for each study-specific fact (no duplicates)')\n"
         "  if issues:\n"
         "      for iss in issues: print('FIX: ' + iss)\n"
         "  else:\n"
@@ -158,7 +162,6 @@ def _collect_quality_issues(
         "SKIPPED",
         "ERROR",
         "STANDARD_TEXT",
-        "ADAPTATION_SKIPPED",
     ):
         return []
 
@@ -218,9 +221,6 @@ class ExtractionEngine:
         If the RLM returns an ERROR result (invalid/missing JSON, exception, etc.)
         the section is re-run with a fresh RLM up to max_retries total attempts.
         """
-        if variable.adaptation_skipped:
-            return self._make_adaptation_skipped_result(variable)
-
         if variable.is_standard_text:
             return self._make_standard_result(variable)
 
@@ -435,15 +435,24 @@ class ExtractionEngine:
             )
 
         evidence: list[Evidence] = []
+        seen_quotes: set[str] = set()
         for e in data.get("evidence", []):
-            if isinstance(e, dict):
-                evidence.append(
-                    Evidence(
-                        quote=str(e.get("quote", "")),
-                        page=str(e.get("page", "")),
-                        section=str(e.get("section", "")),
-                    )
+            if not isinstance(e, dict):
+                continue
+            quote = str(e.get("quote", ""))
+            # Drop duplicate quotes (whitespace/case-insensitive) so the same
+            # passage cited multiple times collapses to a single evidence entry.
+            norm = " ".join(quote.lower().split())
+            if not norm or norm in seen_quotes:
+                continue
+            seen_quotes.add(norm)
+            evidence.append(
+                Evidence(
+                    quote=quote,
+                    page=str(e.get("page", "")),
+                    section=str(e.get("section", "")),
                 )
+            )
 
         return ExtractionResult(
             section_id=data.get("section_id", variable.section_id),
@@ -474,24 +483,6 @@ class ExtractionEngine:
             evidence=[],
             confidence="HIGH",
             notes="Standard required text - no extraction needed.",
-        )
-
-    @staticmethod
-    def _make_adaptation_skipped_result(variable: TemplateVariable) -> ExtractionResult:
-        reason = (
-            variable.adaptation_notes
-            or "Marked as not applicable for this study by adaptation pass."
-        )
-        return ExtractionResult(
-            section_id=variable.section_id,
-            heading=variable.heading,
-            sub_section=variable.sub_section,
-            status="ADAPTATION_SKIPPED",
-            answer="",
-            filled_template="",
-            evidence=[],
-            confidence="N/A",
-            notes=reason,
         )
 
     @staticmethod
