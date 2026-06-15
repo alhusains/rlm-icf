@@ -557,7 +557,7 @@ DEFAULT_POLICY = EvalPolicy()
 
 
 # Placeholder patterns used in filled_template
-_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]+\}\}|<<[^>]+>>|\[TO BE FILLED MANUALLY\]")
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]+\}\}|<<[^>]+>>|\[PLEASE COMPLETE\]")
 
 
 def has_placeholders(text: str) -> bool:
