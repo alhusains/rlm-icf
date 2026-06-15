@@ -6,8 +6,8 @@ text is loaded separately as context_0 in the REPL environment.
 """
 
 from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
-from icf.types import TemplateVariable
 from icf.runtime_injections import prompt_runtime_context
+from icf.types import TemplateVariable
 
 
 def _availability_note(var: TemplateVariable) -> str:
@@ -24,13 +24,29 @@ def _availability_note(var: TemplateVariable) -> str:
         return (
             "NOTE: Some fields in this section may not be found in the "
             "protocol and require manual entry. Extract what you can find, "
-            "mark unfound fields as [TO BE FILLED MANUALLY], and use "
+            "mark unfound fields as [PLEASE COMPLETE], and use "
             'status="PARTIAL" if only some information is found.'
         )
     return (
-        "This information should be findable in the protocol. "
-        "Search thoroughly before concluding NOT_FOUND."
+        "This information should be findable in the protocol. Search thoroughly "
+        "before concluding NOT_FOUND. But if the specific fact this field asks for "
+        "is not stated, mark that field [PLEASE COMPLETE] — do NOT approximate "
+        "it from loosely related or adjacent content."
     )
+
+
+EXTRACTION_PHILOSOPHY = (
+    "EXTRACTION PHILOSOPHY (read first):\n"
+    "- Extract ONLY information the protocol explicitly states, and back everything "
+    "you write with a verbatim quote.\n"
+    "- It is correct and expected that some fields are not in the protocol. Leave "
+    "those as [PLEASE COMPLETE]. Do not try hard to force them.\n"
+    "- NEVER substitute loosely related, adjacent, or inferred content to fill a gap. "
+    "If the protocol does not state the specific fact a field asks for, mark it "
+    "[PLEASE COMPLETE] instead of approximating from something related.\n"
+    "- A partially-answerable section is normal: fill what is supported, mark the "
+    'rest [PLEASE COMPLETE], and use status="PARTIAL".\n\n'
+)
 
 
 def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> str:
@@ -49,13 +65,13 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "{\n"
         f'    "section_id": "{var.section_id}",\n'
         '    "status": "FOUND" | "NOT_FOUND" | "PARTIAL",\n'
-        '    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",\n'
+        '    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [PLEASE COMPLETE] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",\n'
         '    "evidence": [\n'
-        '        {"quote": "Exact verbatim quote from protocol", "page": "Page number"}\n'
+        '        {"quote": "Verbatim quote — a COMPLETE sentence or clause copied exactly from the protocol, not a fragment", "page": "Page number"}\n'
         "    ],\n"
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
         '    "answer": "Plain-language summary of what was found by the extraction process (not patient-facing)",\n'
-        '    "notes": "Any caveats or items needing manual review"\n'
+        '    "notes": "Caveats or items needing the study team to review."\n'
         "}"
     )
 
@@ -66,6 +82,7 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         f"WHAT TO EXTRACT: {var.instructions}\n\n"
     )
     prompt += prompt_runtime_context(var)
+    prompt += EXTRACTION_PHILOSOPHY
 
     if var.required:
         importance = "REQUIRED — this section must appear in every ICF."
@@ -131,8 +148,9 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "   chunks = [context_0[i:i+chunk_size] for i in range(0, len(context_0), chunk_size)]\n"
         "   # Embed chunk text directly in each prompt so the sub-LLM can read it\n"
         "   prompts = [\n"
-        "       f'Find information about TARGET_INFO. Return quotes with page numbers '\n"
-        "       f'(--- PAGE X --- markers). If not found, say NOT FOUND.\\n\\nExcerpt:\\n{chunk}'\n"
+        "       f'Find information about TARGET_INFO. Return the relevant COMPLETE sentences '\n"
+        "       f'verbatim (whole sentences, not fragments) with page numbers (--- PAGE X --- '\n"
+        "       f'markers). If not found, say NOT FOUND.\\n\\nExcerpt:\\n{chunk}'\n"
         "       for chunk in chunks\n"
         "   ]\n"
         "   results = llm_query_batched(prompts)\n"
@@ -153,6 +171,10 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "   for b in ['not found in', 'study documents', 'cannot be found', 'in these passages']:\n"
         "       if b in ft.lower():\n"
         "           issues.append('Meta-commentary: ' + b)\n"
+        "   _ev = result_dict.get('evidence', []) or []\n"
+        "   _uniq = {' '.join(str(e.get('quote', '')).lower().split()) for e in _ev if e.get('quote')}\n"
+        "   if result_dict.get('status') in ('FOUND', 'PARTIAL') and len(ft.strip()) > 200 and len(_uniq) < 2:\n"
+        "       issues.append('Sparse evidence: add a verbatim quote for each study-specific fact (no duplicates)')\n"
         "   if issues:\n"
         "       for iss in issues: print('FIX: ' + iss)\n"
         "   else:\n"
@@ -172,13 +194,16 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "a clinician, a healthy volunteer, a caregiver, or any other person the study is enrolling "
         "— the protocol defines who. Write for whoever the protocol says is being recruited. "
         "It must contain ONLY: required ICF wording "
-        "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+        "(with placeholders filled), protocol information, and [PLEASE COMPLETE] for "
         "missing fields. NEVER include sentences about what was or wasn't found, references to "
         "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
         '2. DO NOT fabricate information. If not found, set status="NOT_FOUND".\n'
-        "3. Every claim must be backed by a verbatim quote from the protocol.\n"
+        "3. Every study-specific claim in filled_template must be backed by its OWN "
+        "verbatim quote. Use complete sentences or clauses, not fragments. Do NOT repeat "
+        "the same quote — one quote per distinct fact — and together the quotes must cover "
+        "all the study-specific information you wrote.\n"
         '4. If only partial info is found, set status="PARTIAL" and note what is missing.\n'
-        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n"
+        "5. For unfillable template placeholders, write [PLEASE COMPLETE] — never explain why.\n"
         + (
             "6. This section is OPTIONAL. After a brief search, if the protocol contains no direct "
             "evidence that this topic applies to this study, return status=\"NOT_FOUND\" immediately. "

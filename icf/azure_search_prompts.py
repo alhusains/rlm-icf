@@ -25,7 +25,7 @@ AZURE_SEARCH_SYSTEM_PROMPT = (
     "  3. Return a JSON object: start with your reasoning, then the extraction fields.\n\n"
     "Core rules:\n"
     "  - Do NOT fabricate information. If a field cannot be answered from the passages,\n"
-    "    write [TO BE FILLED MANUALLY] or return status='NOT_FOUND'.\n"
+    "    write [PLEASE COMPLETE] or return status='NOT_FOUND'.\n"
     "  - Every evidence quote must be a verbatim substring from one of the retrieved passages.\n"
     "  - Write the 'answer' field at a Grade 6 reading level (plain, patient-friendly language).\n"
     "  - The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
@@ -86,7 +86,7 @@ def _availability_note(var: TemplateVariable) -> str:
     if var.partially_in_protocol:
         return (
             "NOTE: Only some fields may be in the protocol. Extract what the retrieved "
-            "documents contain, mark unfound fields as [TO BE FILLED MANUALLY], "
+            "documents contain, mark unfound fields as [PLEASE COMPLETE], "
             "and use status='PARTIAL' if only partial information is found."
         )
     return (

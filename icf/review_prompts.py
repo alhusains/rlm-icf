@@ -12,6 +12,7 @@ Two public functions:
 from __future__ import annotations
 
 from icf.plain_language import UHN_PLAIN_LANGUAGE_GUIDELINES
+from icf.runtime_injections import SIGNATURE_CONSENT_SECTION_ID
 from icf.types import ExtractionResult, TemplateVariable
 
 # Statuses whose content should be included in the review document.
@@ -87,17 +88,18 @@ def build_icf_document_for_review(
         If you have questions about this study ...
 
     Only sections with status FOUND, PARTIAL, or STANDARD_TEXT are included.
-    Sections with status SKIPPED, NOT_FOUND, ERROR, or ADAPTATION_SKIPPED are
-    omitted from the review document (there is no generated text to review).
+    Sections with status SKIPPED, NOT_FOUND, or ERROR are omitted from the
+    review document (there is no generated text to review).
     """
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
-    var_map: dict[str, TemplateVariable] = {v.section_id: v for v in variables}
 
     standard_text_ids: set[str] = set()
     parts: list[str] = []
 
     # Iterate in registry order for natural document flow.
     for var in variables:
+        if var.section_id == SIGNATURE_CONSENT_SECTION_ID:
+            continue
         ext = ext_map.get(var.section_id)
         if ext is None or ext.status not in _REVIEWABLE_STATUSES:
             continue

@@ -58,14 +58,14 @@ NAIVE_SYSTEM_PROMPT = (
     "a clinician, a healthy volunteer, a caregiver, or any other person the study is enrolling "
     "— the protocol defines who. Write for whoever the protocol says is being recruited. "
     "It must contain ONLY: required ICF wording "
-    "(with placeholders filled), protocol information, and [TO BE FILLED MANUALLY] for "
+    "(with placeholders filled), protocol information, and [PLEASE COMPLETE] for "
     "missing fields. NEVER include sentences about what was or wasn't found, references to "
     "'the protocol', 'study documents', or any internal process. Put internal notes in 'notes'.\n"
     "  • Do NOT fabricate information. If information is not in the protocol, say NOT_FOUND.\n"
     "  • Every evidence quote must be a verbatim substring from the protocol text.\n"
     "  • The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
     "  • If only partial information is found, use status='PARTIAL' and note what is missing.\n"
-    "  • For unfillable placeholders, write [TO BE FILLED MANUALLY] — never explain why.\n\n"
+    "  • For unfillable placeholders, write [PLEASE COMPLETE] — never explain why.\n\n"
     "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
     + PLAIN_LANGUAGE_SCOPE
     + UHN_PLAIN_LANGUAGE_GUIDELINES
@@ -88,7 +88,7 @@ def _availability_note(var: TemplateVariable) -> str:
     if var.partially_in_protocol:
         return (
             "NOTE: Some fields in this section may not be in the protocol and require manual "
-            "entry. Extract what you can find, mark unfound fields as [TO BE FILLED MANUALLY], "
+            "entry. Extract what you can find, mark unfound fields as [PLEASE COMPLETE], "
             "and use status='PARTIAL' if only some information is found."
         )
     return (
@@ -106,7 +106,7 @@ _JSON_SCHEMA = """{
     "section_id": "{section_id}",
     "status": "FOUND" | "PARTIAL" | "NOT_FOUND",
     "answer": "Extracted information following UHN Plain Language Guidelines (participant-facing).",
-    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [TO BE FILLED MANUALLY] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
+    "filled_template": "PARTICIPANT-FACING OUTPUT. Required ICF wording with all {{placeholders}} filled from the protocol, <<conditions>> resolved, OR alternatives chosen. Contains ONLY protocol information and [PLEASE COMPLETE] for genuinely missing fields — never sentences about the extraction process or references to the protocol/study documents.",
     "evidence": [
         {{"quote": "Exact verbatim quote from the protocol text", "page": "Page number (from --- PAGE X --- markers)", "section": "Protocol section heading if identifiable"}}
     ],

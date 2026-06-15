@@ -22,7 +22,7 @@ def _availability_note(var: TemplateVariable) -> str:
         return (
             "NOTE: Some fields in this section may not be found in the "
             "protocol and require manual entry. Extract what you can find, "
-            "mark unfound fields as [TO BE FILLED MANUALLY], and use "
+            "mark unfound fields as [PLEASE COMPLETE], and use "
             'status="PARTIAL" if only some information is found.'
         )
     return (
@@ -145,7 +145,7 @@ def build_extraction_prompt(var: TemplateVariable) -> str:
         "2. Every claim must be backed by a verbatim quote from the protocol.\n"
         "3. Simplify medical language to Grade 6 reading level in the 'answer' field.\n"
         '4. If only partial info is found, set status="PARTIAL" and note what is missing.\n'
-        "5. For unfillable template placeholders, write [TO BE FILLED MANUALLY].\n"
+        "5. For unfillable template placeholders, write [PLEASE COMPLETE].\n"
     )
 
     return prompt

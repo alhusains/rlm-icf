@@ -65,16 +65,16 @@ def build_refinement_prompt(
         '    "evidence": [{"quote": "Verbatim quote from protocol", "page": "X"}],\n'
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
         '    "answer": "Plain language summary for the participant (Grade 6-8)",\n'
-        '    "notes": "Caveats or items needing manual review"\n'
+        '    "notes": "Caveats or items needing the study team to review."\n'
         "}"
     )
 
-    # Extract any [TO BE FILLED MANUALLY] gaps from filled_template so we can
+    # Extract any [PLEASE COMPLETE] gaps from filled_template so we can
     # give the model concrete search targets rather than vague issue descriptions.
     import re as _re
 
     manual_gaps = _re.findall(
-        r"[^\n]*\[TO BE FILLED MANUALLY[^\]]*\][^\n]*", first_result.filled_template
+        r"[^\n]*\[PLEASE COMPLETE\][^\n]*", first_result.filled_template
     )
     gaps_block = ""
     if manual_gaps:
@@ -133,7 +133,7 @@ def build_refinement_prompt(
         "2. For meta-commentary in filled_template: move it to result_dict['notes'].\n"
         "3. For unfilled {{...}} or <<...>> markers: resolve them from the protocol.\n"
         "4. Every claim needs a verbatim protocol quote in result_dict['evidence'].\n"
-        "5. Use [TO BE FILLED MANUALLY] only for genuinely absent information.\n"
+        "5. Use [PLEASE COMPLETE] only for genuinely absent information.\n"
         "6. Plain language: Grade 6-8, active voice, short sentences.\n\n"
         "FINALIZE — run this verification block (NO FINAL_VAR inside it):\n"
         "```repl\n"
