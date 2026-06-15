@@ -8,9 +8,10 @@ rather than one-off pipeline branches.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-from icf.types import TemplateVariable
+from icf.types import ExtractionResult, TemplateVariable
 
 # ---------------------------------------------------------------------------
 # US federal funding (sections 21.2 minimal / 21.3 standard)
@@ -59,6 +60,30 @@ SDM_INTRO_RUNTIME_NOTE = (
     "required_text placeholders — but ignore any SDM conditional in suggested_text."
 )
 
+# ---------------------------------------------------------------------------
+# Substitute decision maker — section 32 (signature page consent attestation)
+# ---------------------------------------------------------------------------
+
+SIGNATURE_CONSENT_SECTION_ID = "32"
+
+PARTICIPANT_SIGNATURE_FINAL_BULLET = "I agree to take part in this study."
+
+SDM_SIGNATURE_FINAL_BULLET = (
+    "I agree, or agree to allow the person I am responsible for, to take part in "
+    "this study."
+)
+
+SDM_SIGNATURE_RUNTIME_NOTE = (
+    "This ICF is for completion by a Substitute Decision Maker (SDM) — confirmed by "
+    "the study team, not inferred from the protocol.\n\n"
+    "The final consent attestation bullet MUST read exactly:\n"
+    f"• {SDM_SIGNATURE_FINAL_BULLET}\n\n"
+    "Do NOT search the protocol to decide whether SDM applies.\n"
+    "Do NOT use the default participant-only agreement wording."
+)
+
+_CONSENT_BULLET_LINE_RE = re.compile(r"^[•\-–\*·]\s+")
+
 
 @dataclass(frozen=True)
 class StudyRuntimeFlags:
@@ -90,48 +115,52 @@ def is_sdm_intro_section(var: TemplateVariable) -> bool:
     )
 
 
+def is_sdm_signature_consent_section(var: TemplateVariable) -> bool:
+    return var.section_id == SIGNATURE_CONSENT_SECTION_ID and (
+        var.sub_section or ""
+    ).lower() == "consent"
+
+
 def apply_sdm_injections(variables: list[TemplateVariable]) -> list[str]:
-    """Inject SDM context into section 3 before extraction (incl. Phase A triggers)."""
+    """Inject SDM context into section 3 and signature consent (section 32)."""
     logs: list[str] = []
     for var in variables:
-        if not is_sdm_intro_section(var):
-            continue
-        _append_runtime_note(var, SDM_INTRO_RUNTIME_NOTE)
-        logs.append(f"section {var.section_id} (INTRODUCTION)")
+        if is_sdm_intro_section(var):
+            _append_runtime_note(var, SDM_INTRO_RUNTIME_NOTE)
+            logs.append(f"section {var.section_id} (INTRODUCTION)")
+        if is_sdm_signature_consent_section(var):
+            _append_runtime_note(var, SDM_SIGNATURE_RUNTIME_NOTE)
+            logs.append(f"section {var.section_id} (signature consent)")
     return logs
 
 
 def apply_us_funding_injections(variables: list[TemplateVariable]) -> list[str]:
-    """Inject US-funding context; call after adaptation so optional 21.3 is not skipped."""
+    """Inject the US-funding future-research note into the relevant section(s)."""
     logs: list[str] = []
     for var in variables:
         if not is_us_funding_future_research_section(var):
             continue
-        var.adaptation_skipped = False
         _append_runtime_note(var, US_FUNDING_RUNTIME_NOTE)
         logs.append(f"section {var.section_id}")
     return logs
 
 
-def apply_pre_extraction_injections(
+def apply_runtime_injections(
     variables: list[TemplateVariable], flags: StudyRuntimeFlags
 ) -> list[str]:
-    """Injections that must be visible before any extraction (e.g. SDM on section 3)."""
+    """Apply all user-flag-driven section injections before extraction.
+
+    This is the single extension point for adapting specific sections based on
+    options the user selects in the UI/CLI (currently SDM and US federal
+    funding). Add new flag-driven injections here.
+    """
     messages: list[str] = []
     if flags.sdm:
         sections = apply_sdm_injections(variables)
         if sections:
             messages.append(
-                "SDM form: introduction paragraph wired to " + ", ".join(sections)
+                "SDM form: context wired to " + ", ".join(sections)
             )
-    return messages
-
-
-def apply_post_adaptation_injections(
-    variables: list[TemplateVariable], flags: StudyRuntimeFlags
-) -> list[str]:
-    """Injections applied after the adaptation pass (e.g. US-funded 21.2/21.3)."""
-    messages: list[str] = []
     if flags.us_funded:
         sections = apply_us_funding_injections(variables)
         if sections:
@@ -150,3 +179,54 @@ def prompt_runtime_context(var: TemplateVariable) -> str:
         "protocol search; overrides inferring these flags from the protocol alone):\n"
         f"{var.adaptation_notes.strip()}\n\n"
     )
+
+
+def parse_consent_attestation_bullets(text: str) -> list[str]:
+    """Parse bullet lines from a signature consent attestation block."""
+    items: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _CONSENT_BULLET_LINE_RE.match(stripped)
+        if match:
+            items.append(stripped[match.end() :].strip())
+    return items
+
+
+def apply_signature_final_bullet(bullets: list[str], *, sdm: bool) -> list[str]:
+    """Replace the last consent bullet with the participant or SDM agreement line."""
+    if not bullets:
+        return bullets
+    final = SDM_SIGNATURE_FINAL_BULLET if sdm else PARTICIPANT_SIGNATURE_FINAL_BULLET
+    return bullets[:-1] + [final]
+
+
+def default_signature_consent_bullets(*, sdm: bool) -> list[str]:
+    """Fallback consent attestation bullets when section 32 extraction is unavailable."""
+    return apply_signature_final_bullet(
+        [
+            "All of my questions have been answered",
+            "I allow access to medical records and related personal health information "
+            "as explained in this consent form",
+            "I do not give up any legal rights by signing this consent form,",
+            PARTICIPANT_SIGNATURE_FINAL_BULLET,
+        ],
+        sdm=sdm,
+    )
+
+
+def resolve_signature_consent_bullets(
+    ext_map: dict[str, ExtractionResult],
+    *,
+    sdm: bool,
+) -> list[str]:
+    """Resolve signature-page consent bullets from section 32, with SDM override."""
+    ext = ext_map.get(SIGNATURE_CONSENT_SECTION_ID)
+    if ext is not None and ext.status in {"FOUND", "PARTIAL", "STANDARD_TEXT"}:
+        text = (ext.filled_template or ext.answer or "").strip()
+        if text:
+            bullets = parse_consent_attestation_bullets(text)
+            if bullets:
+                return apply_signature_final_bullet(bullets, sdm=sdm)
+    return default_signature_consent_bullets(sdm=sdm)
