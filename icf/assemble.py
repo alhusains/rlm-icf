@@ -86,11 +86,6 @@ def generate_marked_up_docx(
         ext = ext_map.get(var.section_id)
         val = val_map.get(var.section_id)
 
-        # Omit optional sections that were not found / not applicable.
-        # Required sections always appear so the human reviewer knows to fill them.
-        if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
-            continue
-
         _write_draft_section(doc, var, ext, val, review_result)
 
     # Review appendix
@@ -191,9 +186,6 @@ def _write_draft_section(
     include_heading: bool = True,
 ) -> None:
     """Render one section in the draft ICF (shared by main body and US summary)."""
-    if ext is not None and ext.status in ("NOT_FOUND", "SKIPPED") and not var.required:
-        return
-
     if include_heading:
         level = 2 if var.sub_section else 1
         heading_text = var.heading
@@ -236,7 +228,7 @@ def _write_draft_section(
     elif ext.status in ("NOT_FOUND", "SKIPPED"):
         label = _resolve_section_placeholder_label(var, optional=not var.required)
         _add_highlighted_placeholder(doc, label)
-        suggested = _section_suggested_text(var)
+        suggested = _section_suggested_text(var, ext)
         if suggested:
             sg = doc.add_paragraph()
             sr = sg.add_run("Suggested text: " + suggested[:800])
