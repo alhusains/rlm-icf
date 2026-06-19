@@ -1,0 +1,19 @@
+# Streamlit settings for Azure Container Apps (reverse-proxy + long ICF runs).
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+fileWatcherType = "none"
+maxUploadSize = 200
+# Default disconnectedSessionTTL is 120s — causes ~2 min disconnects when the
+# browser WebSocket goes quiet. ICF runs take 20–30 minutes.
+disconnectedSessionTTL = 7200
+# Keep the WebSocket alive through Azure ingress (default idle limit is 4 min).
+websocketPingInterval = 20
+enableWebsocketCompression = false
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = true
