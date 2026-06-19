@@ -38,6 +38,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # ---- Application code ------------------------------------------------------
 COPY --chown=app:app data/ ./data/
+COPY --chown=app:app .streamlit/ ./.streamlit/
 COPY --chown=app:app app.py ./
 
 # ---- Runtime config --------------------------------------------------------
@@ -50,6 +51,8 @@ ENV STREAMLIT_SERVER_PORT=8000 \
     STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_FILE_WATCHER_TYPE=none \
+    STREAMLIT_SERVER_DISCONNECTEDSESSIONTTL=7200 \
+    STREAMLIT_SERVER_WEBSOCKETPINGINTERVAL=20 \
     PYTHONUNBUFFERED=1
 
 USER app

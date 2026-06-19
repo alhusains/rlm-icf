@@ -40,8 +40,8 @@ APP_NAME="ca-uhn-icf"
 # Sizing
 CPU="1.0"
 MEMORY="2.0Gi"
-MIN_REPLICAS=0
-MAX_REPLICAS=2
+MIN_REPLICAS=2
+MAX_REPLICAS=8
 
 # Image tag — bump for new versions
 IMAGE_TAG="v1"
@@ -156,6 +156,33 @@ az containerapp create \
         "AZURE_OPENAI_API_KEY=secretref:openai-api-key" \
     --output none
 ok "Container App created"
+
+# Streamlit file uploads use a separate HTTP POST from the WebSocket session.
+# Without sticky sessions, Azure load-balances uploads across replicas and
+# users see intermittent "AxiosError: Request failed with status code 400".
+log "Step 6b/9  Enable ingress session affinity (required for Streamlit uploads)"
+az containerapp ingress sticky-sessions set \
+    --resource-group "$RG" \
+    --name "$APP_NAME" \
+    --affinity sticky \
+    --output none
+ok "Sticky sessions enabled"
+
+log "Step 6c/9  Tune ingress transport and HTTP scale rule for Streamlit"
+az containerapp ingress update \
+    --resource-group "$RG" \
+    --name "$APP_NAME" \
+    --transport http \
+    --output none
+az containerapp update \
+    --resource-group "$RG" \
+    --name "$APP_NAME" \
+    --min-replicas "$MIN_REPLICAS" \
+    --max-replicas "$MAX_REPLICAS" \
+    --scale-rule-name ws-concurrency \
+    --scale-rule-http-concurrency 100 \
+    --output none
+ok "Ingress transport=http, scale concurrency=100"
 
 # ---------------------------------------------------------------------------
 # STEP 7 — Grant the app's identity access to ACR and Azure OpenAI
