@@ -38,7 +38,7 @@ from icf.types import ExtractionResult, TemplateVariable
 
 _FONT = "Arial"
 _BODY_PT = 11
-_ANNOTATION_PT = 10
+_ANNOTATION_PT = 11
 _SMALL_PT = 9
 
 # RLM emits MARKER_PLEASE_COMPLETE inline; section-level labels for empty/skipped
@@ -61,10 +61,12 @@ _AI_DISCLAIMER = (
 _CONTENT_STATUSES = {"FOUND", "PARTIAL", "STANDARD_TEXT"}
 _BULLET_RE = re.compile(r"^[•\-–\*·]\s+")
 
-# Tab stop positions (in twips, measured from the left margin) used for all
-# three-column signature blocks so every column aligns perfectly.
-_SIG_TAB1 = 4320  # 3.0" — separates signature column from name column
-_SIG_TAB2 = 6480  # 4.5" — separates name column from date column
+_TESTS_PROCEDURES_SECTION_ID = "13.6"
+_TESTS_PROCEDURES_NOT_FOUND_SUGGESTED = (
+    "This section uses a table layout to show the schedule/frequency of "
+    "study-related activities. Please refer to template for the exact layout "
+    "of the table."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +118,6 @@ def generate_draft_docx(
     _write_cover_page(doc, variables, ext_map)
     _write_validation_main_body(doc, variables, ext_map)
     _write_signature_pages(doc, _get_study_title(ext_map), sdm=sdm, ext_map=ext_map)
-    _add_ai_disclaimer(doc)
 
     doc.save(output_path)
     return output_path
@@ -701,36 +702,48 @@ def _write_cover_page(
 
     _add_blank(doc)
 
-    # One line per 2.x section that has extractable content
+    # Cover fields with extracted content, or empty fields that need study-team input.
     cover_vars = [v for v in variables if v.section_id.startswith("2.")]
     for var in cover_vars:
         ext = ext_map.get(var.section_id)
         content = _get_section_content(ext)
-        if not content:
+        if not content and not _should_render_empty_section(var, ext):
             continue
 
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(0)
-
         label = var.sub_section or ""
-        if label:
-            # Strip any leading repetition of the label from the extracted content
-            # (e.g. "Study Title:" label + "Study Title: XYZ" content → "XYZ").
-            content = _strip_label_prefix(content, label)
-            rl = p.add_run(label)
-            rl.bold = True
-            rl.font.name = _FONT
-            rl.font.size = Pt(_BODY_PT)
-            rv = p.add_run(" " + content)
-            rv.bold = False
-            rv.font.name = _FONT
-            rv.font.size = Pt(_BODY_PT)
+        if content:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+
+            if label:
+                # Strip any leading repetition of the label from the extracted content
+                # (e.g. "Study Title:" label + "Study Title: XYZ" content → "XYZ").
+                content = _strip_label_prefix(content, label)
+                rl = p.add_run(label)
+                rl.bold = True
+                rl.font.name = _FONT
+                rl.font.size = Pt(_BODY_PT)
+                rv = p.add_run(" " + content)
+                rv.bold = False
+                rv.font.name = _FONT
+                rv.font.size = Pt(_BODY_PT)
+            else:
+                r = p.add_run(content)
+                r.font.name = _FONT
+                r.font.size = Pt(_BODY_PT)
         else:
-            r = p.add_run(content)
-            r.font.name = _FONT
-            r.font.size = Pt(_BODY_PT)
+            if label:
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                rl = p.add_run(label)
+                rl.bold = True
+                rl.font.name = _FONT
+                rl.font.size = Pt(_BODY_PT)
+            _add_validation_placeholder(doc, ext, var, optional=not var.required)
 
         _add_blank(doc)
 
@@ -784,7 +797,7 @@ def _add_validation_placeholder(
     label = _resolve_section_placeholder_label(var, optional=optional)
     _add_highlighted_placeholder(doc, label)
 
-    suggested = _section_suggested_text(var)
+    suggested = _section_suggested_text(var, ext)
     if suggested:
         p2 = doc.add_paragraph()
         p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -919,10 +932,20 @@ def _write_signature_pages(
     for _ in range(3):
         _add_blank(doc)
 
-    # --- Signature block 1: Participant / Substitute Decision-Maker ---
-    _sig_underlines(doc)
-    _sig_label(doc, "Signature of Participant/\tPRINTED NAME\tDate")
-    _body_line(doc, "Substitute Decision-Maker")
+    # --- Signature block 1: Participant (and SDM when enabled) ---
+    participant_sig_labels = (
+        ["Signature of Participant/", "Substitute Decision-Maker"]
+        if sdm
+        else ["Signature of Participant"]
+    )
+    _sig_three_column_block(
+        doc,
+        [
+            ("_________________________", participant_sig_labels),
+            ("______________________", ["PRINTED NAME"]),
+            ("______________", ["Date"]),
+        ],
+    )
 
     if sdm:
         _sig_sdm_participant_printed_name_row(doc)
@@ -935,9 +958,17 @@ def _write_signature_pages(
     _add_blank(doc)
 
     # --- Signature block 2: Person Conducting Consent ---
-    _sig_underlines(doc)
-    _sig_label(doc, "Signature of Person Conducting \tPRINTED NAME & ROLE\tDate")
-    _body_line(doc, "the Consent Discussion")
+    _sig_three_column_block(
+        doc,
+        [
+            (
+                "_________________________",
+                ["Signature of Person Conducting", "the Consent Discussion"],
+            ),
+            ("______________________", ["PRINTED NAME & ROLE"]),
+            ("______________", ["Date"]),
+        ],
+    )
 
     for _ in range(2):
         _add_blank(doc)
@@ -979,9 +1010,16 @@ def _write_signature_pages(
     _add_blank(doc)
 
     # Interpreter signature
-    _sig_underlines_interpreter(doc)
-    _sig_label(doc, "PRINT NAME\tSignature\tDate")
-    _body_line(doc, "of Interpreter")
+    _sig_three_column_block(
+        doc,
+        [
+            ("_________________________", ["PRINT NAME", "of Interpreter"]),
+            ("______________________", ["Signature"]),
+            ("______________", ["Date"]),
+        ],
+        space_before_pt=6,
+        trailing_blank=False,
+    )
     _add_blank(doc)
 
     _body_line(doc, "______________________________________________________\t")
@@ -1003,13 +1041,24 @@ def _write_signature_pages(
     _add_blank(doc)
 
     # Witness signature
-    _sig_underlines_interpreter(doc)
-    _sig_label(doc, "PRINT NAME\tSignature\tDate")
-    _body_line(doc, "of witness")
+    _sig_three_column_block(
+        doc,
+        [
+            ("_________________________", ["PRINT NAME", "of witness"]),
+            ("______________________", ["Signature"]),
+            ("______________", ["Date"]),
+        ],
+        space_before_pt=6,
+        trailing_blank=False,
+    )
     _add_blank(doc)
 
     _body_line(doc, "____________________________\t")
     _body_line(doc, "Relationship to Participant")
+
+    for _ in range(2):
+        _add_blank(doc)
+    _add_ai_disclaimer(doc)
 
 
 # ---------------------------------------------------------------------------
@@ -1231,67 +1280,119 @@ def _add_content_block(
                 _add_text_runs(p, stripped, color, highlight_markers)
 
 
-def _apply_sig_tab_stops(para) -> None:
-    """Set two explicit tab stops for a three-column signature paragraph.
+def _set_table_borders_none(table) -> None:
+    """Remove visible borders from a Word table."""
+    tbl = table._tbl
+    tbl_pr = tbl.tblPr
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        tbl.insert(0, tbl_pr)
+    borders = OxmlElement("w:tblBorders")
+    for name in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        edge = OxmlElement(f"w:{name}")
+        edge.set(qn("w:val"), "nil")
+        borders.append(edge)
+    tbl_pr.append(borders)
 
-    Both the underline row and the label row(s) of a signature block must
-    share the same tab stop positions so every column aligns perfectly.
-    """
-    pPr = para._element.get_or_add_pPr()
-    tabs = OxmlElement("w:tabs")
-    for pos in (_SIG_TAB1, _SIG_TAB2):
-        tab = OxmlElement("w:tab")
-        tab.set(qn("w:val"), "left")
-        tab.set(qn("w:pos"), str(pos))
-        tabs.append(tab)
-    pPr.append(tabs)
+
+def _set_cell_margins(cell, *, top: int = 0, bottom: int = 0) -> None:
+    """Set table-cell margins in twips (dxa). Defaults in Word leave a visible row gap."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    existing = tc_pr.find(qn("w:tcMar"))
+    if existing is not None:
+        tc_pr.remove(existing)
+    tc_mar = OxmlElement("w:tcMar")
+    for side, value in (("top", top), ("bottom", bottom)):
+        node = OxmlElement(f"w:{side}")
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")
+        tc_mar.append(node)
+    tc_pr.append(tc_mar)
+
+
+def _add_sig_label_lines(cell, lines: list[str]) -> None:
+    """Write left-aligned label lines directly under a signature underline."""
+    p = cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    for i, line in enumerate(lines):
+        if i > 0:
+            p.add_run().add_break()
+        r = p.add_run(line)
+        r.font.name = _FONT
+        r.font.size = Pt(_BODY_PT)
+
+
+def _sig_three_column_block(
+    doc: Document,
+    columns: list[tuple[str, list[str]]],
+    *,
+    space_before_pt: float = 0,
+    trailing_blank: bool = True,
+) -> None:
+    """Three-column signature block with left-aligned labels under each underline."""
+    table = doc.add_table(rows=2, cols=3)
+    table.autofit = False
+    _set_table_borders_none(table)
+
+    col_widths = (Inches(2.35), Inches(2.05), Inches(1.35))
+    for row in table.rows:
+        for ci, width in enumerate(col_widths):
+            row.cells[ci].width = width
+
+    if space_before_pt:
+        table.rows[0].cells[0].paragraphs[0].paragraph_format.space_before = Pt(
+            space_before_pt
+        )
+
+    for ci, (underline, labels) in enumerate(columns):
+        ul_cell = table.rows[0].cells[ci]
+        ul_p = ul_cell.paragraphs[0]
+        ul_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        ul_p.paragraph_format.space_before = Pt(0)
+        ul_p.paragraph_format.space_after = Pt(0)
+        _set_cell_margins(ul_cell, bottom=0)
+        _run(ul_p, underline)
+
+        label_cell = table.rows[1].cells[ci]
+        _set_cell_margins(label_cell, top=0)
+        _add_sig_label_lines(label_cell, labels)
+
+    if trailing_blank:
+        _add_blank(doc)
 
 
 def _sig_sdm_participant_printed_name_row(doc: Document) -> None:
-    """SDM-only row: prompt on the left, participant printed-name line in the middle column."""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(6)
-    p.paragraph_format.space_after = Pt(0)
-    _apply_sig_tab_stops(p)
-    _run(p, "If consent is provided by Substitute Decision Maker:\t")
-    _run(p, "______________________")
-    p2 = doc.add_paragraph()
-    p2.paragraph_format.space_before = Pt(0)
-    p2.paragraph_format.space_after = Pt(0)
-    _apply_sig_tab_stops(p2)
-    _run(p2, "\tPRINTED NAME of Participant\t")
+    """SDM-only row: prompt on the left, participant printed-name line in the middle."""
+    table = doc.add_table(rows=2, cols=3)
+    table.autofit = False
+    _set_table_borders_none(table)
 
+    col_widths = (Inches(2.35), Inches(2.05), Inches(1.35))
+    for row in table.rows:
+        for ci, width in enumerate(col_widths):
+            row.cells[ci].width = width
 
-def _sig_underlines(doc: Document) -> None:
-    """Standard three-column signature underline row with aligned tab stops."""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(0)
-    _apply_sig_tab_stops(p)
-    _run(p, "____________________________\t______________________\t_________________")
+    prompt_cell = table.rows[0].cells[0]
+    prompt_p = prompt_cell.paragraphs[0]
+    prompt_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    prompt_p.paragraph_format.space_before = Pt(6)
+    _run(prompt_p, "If consent is provided by Substitute Decision Maker:")
 
+    ul_cell = table.rows[0].cells[1]
+    ul_p = ul_cell.paragraphs[0]
+    ul_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    ul_p.paragraph_format.space_before = Pt(6)
+    ul_p.paragraph_format.space_after = Pt(0)
+    _set_cell_margins(ul_cell, bottom=0)
+    _run(ul_p, "______________________")
 
-def _sig_label(doc: Document, text: str) -> None:
-    """Label row under a signature underline block (same tab stops for alignment)."""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(0)
-    _apply_sig_tab_stops(p)
-    _run(p, text)
+    label_cell = table.rows[1].cells[1]
+    _set_cell_margins(label_cell, top=0)
+    _add_sig_label_lines(label_cell, ["PRINTED NAME of Participant"])
 
-
-def _sig_underlines_interpreter(doc: Document) -> None:
-    """Interpreter/witness underline row — middle column has an underlined gap."""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(6)
-    p.paragraph_format.space_after = Pt(0)
-    _apply_sig_tab_stops(p)
-    _run(p, "____________________________\t__")
-    r_gap = p.add_run("            ")
-    r_gap.font.name = _FONT
-    r_gap.font.size = Pt(_BODY_PT)
-    r_gap.underline = True
-    _run(p, "____________\t_________________")
+    _add_blank(doc)
 
 
 # ---------------------------------------------------------------------------
@@ -1343,9 +1444,18 @@ def _add_highlighted_placeholder(doc: Document, label: str) -> None:
     r.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
 
-def _section_suggested_text(var: TemplateVariable | None) -> str:
+def _section_suggested_text(
+    var: TemplateVariable | None,
+    ext: ExtractionResult | None = None,
+) -> str:
     if not var:
         return ""
+    if (
+        var.section_id == _TESTS_PROCEDURES_SECTION_ID
+        and ext is not None
+        and ext.status in ("NOT_FOUND", "SKIPPED")
+    ):
+        return _TESTS_PROCEDURES_NOT_FOUND_SUGGESTED
     if var.suggested_text:
         return _plain_suggested_text(var).strip()
     if var.required_text:
@@ -1354,15 +1464,23 @@ def _section_suggested_text(var: TemplateVariable | None) -> str:
 
 
 def _add_ai_disclaimer(doc: Document) -> None:
-    """Append the AI-use statement at the end of the document."""
-    _add_blank(doc)
+    """Append the AI-use statement at the end of the signature page."""
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_before = Pt(18)
     p.paragraph_format.space_after = Pt(0)
     r = p.add_run(_AI_DISCLAIMER)
     r.font.name = _FONT
     r.font.size = Pt(_BODY_PT)
+
+
+def _should_render_empty_section(
+    var: TemplateVariable, ext: ExtractionResult | None
+) -> bool:
+    """Whether an empty section should still appear with a placeholder."""
+    if var.required:
+        return True
+    return ext is not None and ext.status in ("NOT_FOUND", "SKIPPED", "ERROR")
 
 
 def _get_section_content(ext: ExtractionResult | None) -> str | None:
