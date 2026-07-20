@@ -39,7 +39,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # ---- Application code ------------------------------------------------------
 COPY --chown=app:app data/ ./data/
 COPY --chown=app:app .streamlit/ ./.streamlit/
-COPY --chown=app:app app.py ./
+COPY --chown=app:app app.py worker.py ./
 
 # ---- Runtime config --------------------------------------------------------
 # Streamlit settings tuned for running behind a reverse proxy (Container Apps
