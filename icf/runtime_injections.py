@@ -57,7 +57,7 @@ SDM_INTRO_RUNTIME_NOTE = (
     "Do NOT leave any <<...>> conditional markers in filled_template.\n"
     "Still extract from the protocol: population description, study vs clinical trial "
     "wording (if applicable), decision timeframe, voluntary participation, and other "
-    "required_text placeholders — but ignore any SDM conditional in suggested_text."
+    "required_text placeholders."
 )
 
 # ---------------------------------------------------------------------------
@@ -110,9 +110,7 @@ def is_us_funding_future_research_section(var: TemplateVariable) -> bool:
 
 
 def is_sdm_intro_section(var: TemplateVariable) -> bool:
-    return var.section_id == SDM_INTRO_SECTION_ID and "Substitute Decision Maker" in (
-        f"{var.suggested_text}\n{var.instructions}"
-    )
+    return var.section_id == SDM_INTRO_SECTION_ID
 
 
 def is_sdm_signature_consent_section(var: TemplateVariable) -> bool:

@@ -29,6 +29,118 @@
   },
   "sections": [
     {
+      "section_id": "1.1",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Summary of Informed Consent Form",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": true,
+      "instructions": "",
+      "required_text": "Below is a summary of information about the study.  There is more information in the document called an \"informed consent form\" that follows this summary.  Please read the informed consent form.   The research team will also talk to you about the study and you can ask any questions you may have.\n\nParticipation in research is voluntary.  It is your choice whether you take part in this study.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.2",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Study purpose",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Provide a brief description of the primary reason why the research is being conducted, in no more than 2-3 sentences, written in plain language.",
+      "required_text": "Study purpose\nThe purpose of this study is {{provide a brief description of the primary reason why the research is being conducted, no more than 2-3 sentences.}}",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.3",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Duration",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Provide the expected duration of study participation and the period of time participants will be followed.",
+      "required_text": "It is expected that study participation will last {{provide expected duration}}.  Participants will be followed for {{define period of time.}}",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.4",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Study Procedures",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Briefly describe and highlight key study procedures and, if applicable, outline procedures that may be lengthy/burdensome to participants\n\nFill the placeholders in the required text: name the interventional group(s); briefly describe the key procedures (e.g., the frequency of study visits and what happens at them); and, if applicable, describe any lengthy or burdensome procedures and how much extra time they take. The 'If applicable:' clause about lengthy/burdensome procedures should be included only when such procedures exist. You are allowed to edit the required text a bit at the end just to make the paragraph coherent and in plain grade 8 correct language",
+      "required_text": "This study is looking at {{describe interventional group(s).}}  Participants will also {{briefly describe key procedures}} study visits every {{X}} weeks during which the researchers will do some tests.  <Only include the following sentence if lengthy or burdensome procedures exist:> You will be asked to do {{describe lengthy or burdensome procedures}} which may take {{specify time}} extra time.",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.5",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Risks",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Describe the most important risks. Consider those most probable and/or of highest magnitude of harm. This summary should NOT include the full list of risks.\n\nFor the 'most likely' risks: include the risks participants are most likely to experience, specified in lay language with their expected frequency. Provide one bullet per risk.\n\nFor the 'most serious' risks: include this part only if applicable. For the purposes of this summary, serious risks are considered those that may result in death, hospitalization, or are permanent. Specify each in lay language with expected frequency, one bullet per risk.",
+      "required_text": "Participation in this study may involve risks to you.  These risks are described in detail in the informed consent form.\n\nThe risks you are most likely to experience are:\n• {{Specify risk in lay language with expected frequency}}\n\n<If applicable — only include the following if there are any serious risks in the study (those that may result in death, hospitalization, or are permanent):>\nThe most serious risks are:\n• {{Specify risk in lay language with expected frequency}}",
+      "suggested_text": "",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.6",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Benefits",
+      "required": true,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "Insert the direct benefit, or state if there is no direct benefit. The suggested text holds a placeholder for the benefit statement, followed by a conditional example: if direct benefit to the participant is unknown but there is a greater benefit to society, include the example sentence ('We do not know if you will receive medical benefit...'); otherwise replace the placeholder with the study-specific direct-benefit statement and omit the example.",
+      "required_text": "",
+      "suggested_text": "{{Insert direct benefit, or state if there is no direct benefit.}}\n<If direct benefit to participant is unknown but there is a greater benefit to society, include for example:> We do not know if you will receive medical benefit from participation but researchers hope that this study will fulfil its purpose and benefit others in future.",
+      "suggested_text_format": "text"
+    },
+    {
+      "section_id": "1.7",
+      "heading": "Summary of Informed Consent Form",
+      "sub_section": "Alternatives",
+      "required": false,
+      "complexity": [
+        "Moderate mapping complexity"
+      ],
+      "is_in_protocol": true,
+      "partially_in_protocol": false,
+      "is_standard_text": false,
+      "instructions": "State that the participant does not have to participate to receive medical care if applicable to this study (include the suggested text). If it's not applicable to this study (i.e. the study is not about receiving medical care), leave this section empty.",
+      "required_text": "",
+      "suggested_text": "You do not have to participate in this study to receive medical care.",
+      "suggested_text_format": "text"
+    },
+    {
       "section_id": "2.1",
       "heading": "Informed Consent Form for Participation in a Research Study",
       "sub_section": "Study Title:",
@@ -52,12 +164,12 @@
       "complexity": [
         "Easy mapping complexity"
       ],
-      "is_in_protocol": true,
+      "is_in_protocol": false,
       "partially_in_protocol": false,
       "is_standard_text": false,
       "instructions": "Insert sponsor’s study ID if applicable.",
       "required_text": "",
-      "suggested_text": "",
+      "suggested_text": "{{Insert sponsor’s study ID if applicable}}",
       "suggested_text_format": "text"
     },
     {
@@ -69,12 +181,12 @@
         "Not in protocol - requires manual entry",
         "Easy mapping complexity"
       ],
-      "is_in_protocol": true,
-      "partially_in_protocol": true,
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
       "is_standard_text": false,
       "instructions": "Insert name, department and telephone or pager number.\nIndicate “Dr.” only for doctors licensed to practice medicine in Canada; indicate “Nurse” only for nurses licensed to practice in Canada. All other Investigators should be referred by their credentials and, if applicable, country of practice. (E.g., “Dr. Tom Smith,” “Ms. Jane Smith, Nurse Practitioner,” “George Brown. PhD,” “George Brown, Nurse Practitioner, (New Zealand)”)",
       "required_text": "",
-      "suggested_text": "",
+      "suggested_text": "{{Insert name, department and telephone or pager number}}",
       "suggested_text_format": "text"
     },
     {
@@ -102,12 +214,12 @@
         "Not in protocol - requires manual entry",
         "Easy mapping complexity"
       ],
-      "is_in_protocol": true,
-      "partially_in_protocol": true,
+      "is_in_protocol": false,
+      "partially_in_protocol": false,
       "is_standard_text": false,
       "instructions": "Insert the name of the Sponsor or, if applicable, the funder(s) of the research as documented in the protocol and/or application form, including, if applicable, drug suppliers. In general, UHN should not be indicated as a sponsor unless the UHN is a regulatory sponsor, then the entity that funds the study should be indicated as well as non-for-profit status of the UHN.\n\nShould communication via e-mail be suggested, when providing an e-mail address, include a disclaimer (as applicable). Only UHN email addresses should be provided to participants.",
       "required_text": "",
-      "suggested_text": "<If email communication is suggested — choose ONE of the following>\nPlease note that communication via e-mail is not absolutely secure. Thus, please do not communicate personal sensitive information via e-mail.\nOR\nPlease note that the security of e-mail messages is not guaranteed. Messages may be forged, forwarded, kept indefinitely, or seen by others using the Internet. Do not use e-mail to discuss information you think is sensitive. Do not use e-mail in an emergency since e-mail may be delayed.",
+      "suggested_text": "{{Insert the name of the Sponsor or, if applicable, the funder(s) of the research}}\n\n<If email communication is suggested — choose ONE of the following>\nPlease note that communication via e-mail is not absolutely secure. Thus, please do not communicate personal sensitive information via e-mail.\nOR\nPlease note that the security of e-mail messages is not guaranteed. Messages may be forged, forwarded, kept indefinitely, or seen by others using the Internet. Do not use e-mail to discuss information you think is sensitive. Do not use e-mail in an emergency since e-mail may be delayed.",
       "suggested_text_format": "text"
     },
     {
@@ -123,7 +235,7 @@
       "is_standard_text": false,
       "instructions": "This may be a pager number (in this case change the heading to 'Pager number'). Clearly provide instructions for whom to contact, e.g. Principal Investigator, Co-investigator, a staff physician on call (e.g., 'Ask for the Medical Oncologist on call'). The contact person must be knowledgeable about the study.\n\nShould a pager or hospital locating be used, provide brief instructions on how to page/use locating (e.g. 'Ask hospital locating to page the study doctor').\n\nShould communication via e-mail be suggested, when providing an e-mail address, include a disclaimer (as applicable). Only UHN email addresses should be provided to participants.",
       "required_text": "",
-      "suggested_text": "[Emergency Contact Number: {{insert 24hr/7-day contact number or pager instructions}}]\n\n<If email communication is suggested — choose ONE of the following>\nPlease note that communication via e-mail is not absolutely secure. Thus, please do not communicate personal sensitive information via e-mail.\nOR\nPlease note that the security of e-mail messages is not guaranteed. Messages may be forged, forwarded, kept indefinitely, or seen by others using the Internet. Do not use e-mail to discuss information you think is sensitive. Do not use e-mail in an emergency since e-mail may be delayed.",
+      "suggested_text": "",
       "suggested_text_format": "text"
     },
     {
@@ -138,9 +250,9 @@
       "is_in_protocol": true,
       "partially_in_protocol": true,
       "is_standard_text": false,
-      "instructions": "{{main features of population}}: Explain the main features of the population to which the research applies. Do not include an extensive list of inclusion/exclusion criteria. A high-level summary is required (e.g., 'you have been diagnosed with [condition]', 'you are a healthy adult volunteer').\n\n{{Specify other potential participant concerns}}: Specify any other areas where participants might be concerned about a potential penalty or discrimination (e.g., 'the decision will not affect your employment'). Omit if no such concerns apply.\n\nSUBSTITUTE DECISION MAKER (SDM): For studies where consent is sought through a substitute decision maker, prepend the SDM paragraph (see suggested_text) before the main introduction.",
+      "instructions": "{{main features of population}}: Explain the main features of the population to which the research applies. Do not include an extensive list of inclusion/exclusion criteria. A high-level summary is required (e.g., 'you have been diagnosed with [condition]', 'you are a healthy adult volunteer').\n\n{{Specify other potential participant concerns}}: Specify any other areas where participants might be concerned about a potential penalty or discrimination (e.g., 'the decision will not affect your employment'). Omit if no such concerns apply.",
       "required_text": "You are being invited to participate in a research study. You are invited to participate in this study because you {{explain the main features of the population to which the research applies}}. This consent form provides you with information to help you make an informed choice. Please read this document carefully and ask any questions you may have.  All your questions should be answered to your satisfaction before you decide whether to participate in this research study.\n\nPlease take your time in making your decision.  You may find it helpful to discuss it with your friends and family.\n\nTaking part in this study is voluntary.  You have the option to not participate at all or you may choose to leave the study at any time.  Whatever you choose, it will not affect the usual medical care that you receive outside the study. {{Specify any other potential areas where participants might be concerned about a potential penalty or discrimination, such as the decision will not affect your employment — omit if none apply}}.",
-      "suggested_text": "<<For studies where consent is sought through a substitute decision maker, prepend this paragraph before the main introduction>>\nAs a Substitute Decision Maker, you are being asked to provide informed consent on behalf of a person who is unable to provide consent for themselves.  If the participant gains the capacity to consent for themselves, your consent for them will end.  Throughout this form, “you” means the person you are representing.",
+      "suggested_text": "",
       "suggested_text_format": "text"
     },
     {
@@ -332,7 +444,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Describe sample collection, including the sample type and amount, manner/safety of acquisition, purpose of the research (including any known commercial use), measures employed to protect privacy and minimize risk, and length, method, and location (city and country only) of storage.\n\nInclude a study-specific lay explanation of the research purposes for all samples collected.\n\nSpecify what will happen to samples once the mandatory research has been completed.\n\nDescribe who will be informed of the results of the mandatory research. Specify if results will be placed in the individual's medical record.",
+      "instructions": "PREREQUISITE: Only extract content for this section if the protocol explicitly mentions collection of biological samples, biospecimens, blood, urine, tissue, or other biological materials from participants. If the study does not involve any sample collection (e.g., survey, interview, chart review, questionnaire-only studies), output NOT_FOUND immediately — do not generate or infer any content.\n\nDescribe sample collection, including the sample type and amount, manner/safety of acquisition, purpose of the research (including any known commercial use), measures employed to protect privacy and minimize risk, and length, method, and location (city and country only) of storage.\n\nInclude a study-specific lay explanation of the research purposes for all samples collected.\n\nSpecify what will happen to samples once the mandatory research has been completed.\n\nDescribe who will be informed of the results of the mandatory research. Specify if results will be placed in the individual's medical record.",
       "required_text": "",
       "suggested_text": "The researchers doing this study need to do tests on samples (described below) to {{insert study specific LAY explanation of the research purposes for all samples collected}}.\n\nThe collection of these samples is a necessary part of this study.  The samples will not be sold.\n\n<Specify what will happen to samples once the mandatory research has been completed. For example>\nOnce these tests have been completed, any leftover samples will be returned to the facility from which they were obtained, if needed, or destroyed.\n\n<Describe who will be informed of the results of the mandatory research. For example — choose ONE of the following>\nReports about any research tests done with your samples will not be given to you, the study doctor(s) or study staff, your doctor, or other health care provider(s). These reports will not be put in your medical records.\nOR\nReports about research tests done with your samples will be given to the study doctor(s).  If you would like to learn the results of this research, please let them know. {{Specify if results will be placed in the individual's medical record}}.",
       "suggested_text_format": "text"
@@ -365,7 +477,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Specify which sample type(s) apply to this study (blood, urine, or other).\n\nDescribe the method of blood/urine/other sample collection and associated risks. Specify the number of samples to be collected and timing (e.g., specify if 24-hour collection) if multiple samples are required. Specify the location and purpose for the review.\n\nFor blood collection, specify the amount of blood to be collected and timing if additional samples are required, and the tests to be done on these samples.\n\nFor biomarker testing, describe what would be done.",
+      "instructions": "PREREQUISITE: Only extract content for this section if the protocol explicitly mentions collection of biological samples, biospecimens, blood, urine, tissue, or other biological materials from participants. If the study does not involve any sample collection (e.g., survey, interview, chart review, questionnaire-only studies), output NOT_FOUND immediately — do not generate or infer any content.\n\nSpecify which sample type(s) apply to this study (blood, urine, or other).\n\nDescribe the method of blood/urine/other sample collection and associated risks. Specify the number of samples to be collected and timing (e.g., specify if 24-hour collection) if multiple samples are required. Specify the location and purpose for the review.\n\nFor blood collection, specify the amount of blood to be collected and timing if additional samples are required, and the tests to be done on these samples.\n\nFor biomarker testing, describe what would be done.",
       "required_text": "",
       "suggested_text": "These samples will be collected at {{specify location (city and country only)}} for the purpose of {{specify purpose of the review e.g., pharmacokinetic analysis, biomarker testing}}.\n\n• Urine will be collected {{Specify number of samples to be collected and timing (e.g., specify if 24 hour collection) if multiple samples are required}}.\n• Blood samples will be taken by inserting a needle into a vein in your arm. These will be taken at the same time as tests required for your clinical care whenever possible, {{describe sample timing e.g. at entry to the study and <X> weeks after that}}. {{Specify amount of blood to be collected and timing if additional samples are required and the tests to be done on these samples}}.\n• Pharmacokinetics (PK) testing: Blood samples will be taken to study how the drug is absorbed, distributed, broken down, and how it gets out of your body. The blood samples will be taken at different visits either before and/or after the drug is taken.\n• Biomarker(s) (biological flags used to measure disease progress or drug effect):  {{Describe what would be done}}.",
       "suggested_text_format": "text"
@@ -381,7 +493,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Specify which identifiers will be on the sample(s). If additional personal information is also being provided to the laboratory (e.g., on additional forms provided with the review materials), include a description of the information provided.\n\nIdentify location where specimens will be retained. If samples are to be sent to different locations, please specify.",
+      "instructions": "PREREQUISITE: Only extract content for this section if the protocol explicitly mentions collection of biological samples, biospecimens, blood, urine, tissue, or other biological materials from participants. If the study does not involve any sample collection (e.g., survey, interview, chart review, questionnaire-only studies), output NOT_FOUND immediately — do not generate or infer any content.\n\nSpecify which identifiers will be on the sample(s). If additional personal information is also being provided to the laboratory (e.g., on additional forms provided with the review materials), include a description of the information provided.\n\nIdentify location where specimens will be retained. If samples are to be sent to different locations, please specify.",
       "required_text": "",
       "suggested_text": "To protect your identity, the information that will be on your samples will be limited to {{specify which identifiers will be on the sample(s)}}.\n\n<If additional personal information is also being provided to the laboratory, include a description of the information provided>\nThe laboratory will also receive information containing your {{specify}}.\n\n<Identify location where specimens will be retained. If samples are to be sent to different locations, please specify. For example>\nThese {{tissue/blood/urine}} samples will be sent to a laboratory at {{insert location (city and country only)}}, where they will be examined.",
       "suggested_text_format": "text"
@@ -414,7 +526,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": true,
       "is_standard_text": false,
-      "instructions": "Describe the process for withdrawal of samples, and any limitations to the withdrawal. Identify the appropriate contact person and describe what will happen to the samples if the participant withdraws consent (e.g., returned to the hospital from which they were obtained, or destroyed).\n\nDescribe any limits of the withdrawal, if applicable (for example, results from tests already performed cannot be withdrawn).\n\nIf samples are to be anonymized at a certain point, include the anonymization paragraph and specify the expected anonymization point.\n\nState whether or not the participant may continue to participate in the main part of the study if they withdraw required samples.",
+      "instructions": "PREREQUISITE: Only extract content for this section if the protocol explicitly mentions collection of biological samples, biospecimens, blood, urine, tissue, or other biological materials from participants. If the study does not involve any sample collection (e.g., survey, interview, chart review, questionnaire-only studies), output NOT_FOUND immediately — do not generate or infer any content.\n\nDescribe the process for withdrawal of samples, and any limitations to the withdrawal. Identify the appropriate contact person and describe what will happen to the samples if the participant withdraws consent (e.g., returned to the hospital from which they were obtained, or destroyed).\n\nDescribe any limits of the withdrawal, if applicable (for example, results from tests already performed cannot be withdrawn).\n\nIf samples are to be anonymized at a certain point, include the anonymization paragraph and specify the expected anonymization point.\n\nState whether or not the participant may continue to participate in the main part of the study if they withdraw required samples.",
       "required_text": "",
       "suggested_text": "If you no longer want your samples to be used in this research, you should tell {{specify appropriate contact person}}, who will ensure the samples are {{describe what will happen to samples if participant withdraws consent, e.g., returned to the hospital from which they were obtained or destroyed}}.\n\n<Describe any limits of the withdrawal, if applicable. For example>\nIf tests have already been done on your sample(s) it will not be possible to withdraw those results. However, no further testing will be done.\n\n<<If samples are to be anonymized at a certain point>>\nYou can request withdrawal of your specimens until {{insert expected anonymization point}}, when the samples will be anonymized. “Anonymized” means the link between your personal identifying information and study ID/data will be deleted. After records linking your identity to your sample(s) are destroyed, it won't be possible to return samples after this because the researchers will not know which sample is yours.\n\n{{State whether or not the participant may continue to participate in this main part of the study if they withdraw required samples.",
       "suggested_text_format": "text"
@@ -430,9 +542,9 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "When the study involves a number of visits, e.g. more than 2-4, then provide a table with a summary of procedures, including the approximate time commitment (as applicable, based on the protocol).\n\nUse a complicated-schedule table when there are many study-related procedures and visits, or a non-complicated schedule table when there are few.",
+      "instructions": "When the study involves a number of visits (e.g. more than 2–4), provide a table with a summary of procedures, including the approximate time commitment (as applicable, based on the protocol). Use a complicated-schedule table when there are many study-related procedures and visits, or a non-complicated schedule table when there are few.\n\nOutput a table ONLY — no narrative sentences before or after the table. Keep procedure and activity names short (3–5 words max). Do not add explanatory or introductory sentences. Do not repeat information already covered in WHAT WILL HAPPEN DURING THIS STUDY. If the study has only 1–2 visits with minimal procedures already described elsewhere, output NOT_FOUND and skip this section.\n\nDo NOT include the informed consent signing process as a row in this table. Consent is obtained before study participation begins and must never appear in the schedule of events.",
       "required_text": "",
-      "suggested_text": "<Example for a complicated schedule (use when there are many study-related procedures and visits)>\n<table><thead><tr><th>Tests</th><th>Visit 1/Week</th><th>Visit 2/Week 4</th><th>Visit 3/Week 8</th><th>Visits 4-10 every month</th></tr></thead><tbody><tr><td>Blood tests</td><td></td><td></td><td></td><td></td></tr><tr><td>Questionnaire</td><td></td><td></td><td></td><td></td></tr><tr><td>Length of visit</td><td></td><td></td><td></td><td></td></tr></tbody></table>\n\n<Example of a non-complicated schedule (use when there are few study-related procedures and visits)>\n<table><thead><tr><th>Visit</th><th>Tests and Procedures</th></tr></thead><tbody><tr><td>Screening</td><td>Blood tests, complete questionnaire…</td></tr><tr><td>Visit 1 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 2 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 3 {{approx visit length}}</td><td>Blood tests.</td></tr></tbody></table>",
+      "suggested_text": "This section uses a table layout to show the schedule and frequency of study-related activities. Complete the table below based on your study's visit schedule.\n\n<Example for a complicated schedule (use when there are many study-related procedures and visits)>\n<table><thead><tr><th>Tests</th><th>Visit 1/Week</th><th>Visit 2/Week 4</th><th>Visit 3/Week 8</th><th>Visits 4-10 every month</th></tr></thead><tbody><tr><td>Blood tests</td><td></td><td></td><td></td><td></td></tr><tr><td>Questionnaire</td><td></td><td></td><td></td><td></td></tr><tr><td>Length of visit</td><td></td><td></td><td></td><td></td></tr></tbody></table>\n\n<Example of a non-complicated schedule (use when there are few study-related procedures and visits)>\n<table><thead><tr><th>Visit</th><th>Tests and Procedures</th></tr></thead><tbody><tr><td>Screening</td><td>Blood tests, complete questionnaire…</td></tr><tr><td>Visit 1 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 2 {{approx visit length}}</td><td>Blood tests.</td></tr><tr><td>Visit 3 {{approx visit length}}</td><td>Blood tests.</td></tr></tbody></table>",
       "suggested_text_format": "html"
     },
     {
