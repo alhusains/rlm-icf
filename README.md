@@ -1,331 +1,361 @@
-# UHN ICF Automation Pipeline
+# AI-ICF — UHN Informed Consent Form Pipeline
 
-Automatically extracts information from clinical study protocols (PDF/DOCX) and generates Informed Consent Form (ICF) documents aligned with the UHN ICF template.
+AI-assisted drafting of **Informed Consent Forms (ICFs)** from clinical study protocols (PDF/DOCX), aligned with UHN ICF templates.
 
-Built on [Recursive Language Models (RLMs)](https://arxiv.org/abs/2512.24601) with support for multiple extraction backends and automated quality evaluation.
+Built on [Recursive Language Models (RLMs)](https://arxiv.org/abs/2512.24601). Production uses the **RLM extraction backend** with **Azure OpenAI**.
 
-## Overview
+> **Beta.** Output is a draft for study-team review. It does **not** replace REB, legal, regulatory, ethical, or clinical review. Do not submit AI-generated content to CAPCR/REB or share it with participants without thorough human verification.
 
-The pipeline reads a clinical study protocol, matches it against a structured ICF template registry, and uses LLMs to extract and draft each ICF section. It produces publication-quality DOCX documents with UHN branding, evidence citations, and confidence scoring.
+## What it does
+
+1. Study team selects an ICF template (above minimal risk or minimal risk) and uploads a protocol.
+2. Optional study flags (US federal funding, substitute decision maker) adjust which sections run and how wording is injected.
+3. The pipeline extracts each template section from the protocol using RLM, with evidence quotes and confidence.
+4. Post-extraction passes harmonize related sub-sections, validate quote grounding, review for plain language, and auto-remediate eligible flags.
+5. Outputs: a UHN-branded **draft** DOCX, a **marked-up** DOCX (traceability + review appendix), and a full **JSON** audit report.
+
+**Intended for:** UHN investigator-initiated, non-complex studies (typically single-arm / cohort).
+
+**Not intended for:** CTO studies, sponsor/CRO-provided consent forms, optional/pregnancy follow-up forms, or legacy `.doc` uploads.
+
+---
+
+## Architecture
+
+Production splits the UI from the long-running pipeline:
+
+```
+┌─────────────────────┐     enqueue      ┌──────────────────┐
+│  Streamlit UI       │ ───────────────► │  Azure Storage   │
+│  (app.py)           │                  │  Queue: icf-jobs │
+│  Entra Easy Auth    │ ◄── poll/status ─│  Blob + Table    │
+└─────────────────────┘                  └────────┬─────────┘
+                                                  │
+                                         KEDA trigger
+                                                  │
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │  Worker job      │
+                                         │  (worker.py)     │
+                                         │  ICFPipeline     │
+                                         │  Azure OpenAI    │
+                                         └────────┬─────────┘
+                                                  │
+                              outputs + optional ACS email
+```
+
+| Tier | Entry point | Role |
+|------|-------------|------|
+| **UI** | `app.py` | Auth, upload, enqueue job, poll status, serve downloads. Needs storage only. |
+| **Worker** | `worker.py` | One queue message → one full RLM pipeline run (~20–30 min) → blob upload → optional email. |
+| **Job store** | `icf/jobs.py` | Queue + blobs (`icf-input` / `icf-output`) + `jobs` table via `DefaultAzureCredential`. |
+
+The same Docker image runs both tiers (`CMD` defaults to Streamlit; the worker job overrides the command to `python worker.py`).
+
+Local/CLI runs bypass the queue and call `ICFPipeline` directly via `run_pipeline.py`.
+
+---
+
+## Pipeline stages
 
 ```
 Protocol (PDF/DOCX)  +  ICF Template Registry (JSON)
          |                        |
          v                        v
-    [1] Ingest              [2] Load Registry
+    [1] Ingest              [2] Load registry
          |                        |
          +--------+---------------+
                   v
-        [3] Inject runtime study context (US-funding, SDM, ...)
+        [2.5] Runtime injections (US funding, SDM, …)
                   |
                   v
-        [4] Extract all sections
+        [3] Extract (RLM, one fresh instance per section)
                   |
                   v
-        [5] Validate (quote grounding + reading level)
+        [5.5] Harmonize related sub-sections
                   |
                   v
-        [6] Assemble outputs
-              +-- draft_icf_*.docx          (UHN-branded draft for study-team review)
-              +-- marked_up_icf_*.docx      (annotated with evidence, status & review flags)
-              +-- extraction_report_*.json  (full structured data)
+        [6] Validate (quote grounding + meta-commentary checks)
+                  |
+                  v
+        [8] Plain-language review
+                  |
+                  v
+        [9] Remediate eligible review flags
+                  |
+                  v
+        Assemble outputs
+              ├── draft_icf_*.docx
+              ├── marked_up_icf_*.docx
+              └── extraction_report_*.json
 ```
 
-## Quick Setup
+| Stage | Module | Description |
+|-------|--------|-------------|
+| **1 Ingest** | `icf/ingest.py` | Parse PDF/DOCX; page markers for evidence traceability. |
+| **2 Registry** | `icf/registry.py` | Load JSON template sections (CSV legacy still supported). |
+| **2.5 Injections** | `icf/runtime_injections.py` | Apply US-funding / SDM notes onto sections before extraction. |
+| **3 Extract** | `icf/extract.py` | RLM per section: search protocol via REPL, return structured JSON. |
+| **5.5 Harmonize** | `icf/harmonize.py` | De-dupe / redistribute content across related sub-sections (on by default). |
+| **6 Validate** | `icf/validate.py` | Verify cited quotes appear in the protocol; flag meta-commentary. |
+| **8 Review** | `icf/review.py` | Plain-language flags (terminology, passive voice, repetition, etc.). |
+| **9 Remediate** | `icf/remediate.py` | Auto-patch HIGH (and eligible MEDIUM) flags. |
+| **Assemble** | `icf/assemble.py`, `icf/clean_icf.py` | Marked-up DOCX, draft DOCX, JSON report. |
+
+Production worker settings: `extraction_backend="rlm"`, `backend="azure_openai"`, review/harmonize/remediation **enabled**.
+
+CLI skip flags: `--skip-harmonize`, `--skip-review`, `--skip-remediation`, `--remediate-high-only`.
+
+---
+
+## RLM extraction
+
+For each template section, the pipeline starts a **fresh** `RLM(environment="local")` instance:
+
+1. Full protocol text is loaded as `context_0`.
+2. The model writes `` ```repl `` blocks to search/chunk the protocol and call `llm_query` / `llm_query_batched`.
+3. It returns structured JSON: `status`, `answer`, `filled_template`, `evidence[]`, `confidence`, `notes`.
+4. Routing before RLM:
+   - **Standard boilerplate** → use required text as-is (`STANDARD_TEXT`)
+   - **Not in protocol** → `SKIPPED` (manual study-team entry)
+   - **Otherwise** → RLM extraction with an iteration budget by complexity (Easy 10 / Moderate 15 / Complex 20)
+
+Quality loop: invalid/garbage JSON is retried; unfilled placeholders or meta-commentary can trigger a refinement pass.
+
+---
+
+## Templates and study options
+
+### Registries
+
+| Study type | Registry file |
+|------------|---------------|
+| Above minimal risk (full ICF) | `data/UHN_standard_ICF_template_breakdown_new.json` |
+| Minimal risk | `data/minimal_risk_ICF_template_breakdown.json` |
+
+Each registry is a JSON document with a `schema` (symbol/field guide) and a `sections[]` array. Section fields include `section_id`, `heading`, `instructions`, `required_text` / `suggested_text`, complexity, and availability flags (`is_in_protocol`, `partially_in_protocol`, `is_standard_text`).
+
+Symbol conventions: `{{placeholders}}`, `<conditions>`, `<<blocks>>`, and `OR` alternatives (see `schema.symbol_guide` in the registry).
+
+### Runtime flags
+
+| Flag | CLI | Effect |
+|------|-----|--------|
+| US federal funding | `--us-funded` | Include Summary of ICF sections (`1.x`) and related wording injections. |
+| Substitute decision maker | `--sdm` | SDM intro on §3 and SDM signature-page wording. |
+
+In the web UI these appear as checkboxes on the generation form.
+
+---
+
+## Outputs
+
+Files are named `{artifact}_{backend}_{protocol_stem}.{ext}` (production backend stem is `rlm`):
+
+| Artifact | Description |
+|----------|-------------|
+| `draft_icf_*.docx` | Working copy for the study team (UHN layout, yellow `[PLEASE COMPLETE]`, grey annotations). |
+| `marked_up_icf_*.docx` | Traceability: evidence, status, validation, review appendix. |
+| `extraction_report_*.json` | Full audit trail (extractions, validations, review, remediation). |
+
+Completed web jobs retain downloadable outputs for a short window (default **3 hours**, `ICF_RETENTION_HOURS`), then are purged from blob/table storage. When Azure Communication Services is configured on the worker, the draft and marked-up DOCX are also emailed to the requester.
+
+---
+
+## Quick start (local CLI)
 
 ```bash
-# Install dependencies
+# From repo root
 pip install -e .
+pip install -r requirements.txt   # or at least: python-docx pypdf
 
-# For RAG backend (optional)
-pip install -e ".[rag]"
-
-# For Azure AI Search backend (optional)
-pip install azure-search-documents
-
-# For evaluation framework (optional)
-pip install deepeval textstat
+cp .env.example .env
+# Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT
 ```
-
-Copy `.env.example` to `.env` and fill in your values. A single `.env` file drives all 4 extraction backends **and** the evaluation judge:
 
 ```bash
-cp .env.example .env
+# Standard (above minimal risk) template — default when --study-type standard
+python run_pipeline.py \
+    --protocol path/to/protocol.pdf \
+    --study-type standard \
+    --verbose
+
+# Minimal risk
+python run_pipeline.py \
+    --protocol path/to/protocol.pdf \
+    --study-type minimal_risk
+
+# Explicit registry + study flags + section filter
+python run_pipeline.py \
+    --protocol path/to/protocol.pdf \
+    --registry data/UHN_standard_ICF_template_breakdown_new.json \
+    --us-funded \
+    --sdm \
+    --sections 2.1 3 6 8 \
+    --backend azure_openai \
+    --azure-deployment gpt-5.4
 ```
+
+Defaults: `--extraction-backend rlm`, `--backend azure_openai`, `--model gpt-5.4`.
+
+Useful options:
+
+| Flag | Purpose |
+|------|---------|
+| `--output-dir` | Output directory (default: `output`) |
+| `--max-iterations` | Cap RLM iterations per section (default: 20) |
+| `--debug-log-dir` | Write JSONL RLM iteration traces |
+| `--skip-harmonize` / `--skip-review` / `--skip-remediation` | Skip post-extraction stages |
+| `--convert-registry` | One-shot CSV → JSON registry conversion |
+
+Re-run post-processing on an existing report without re-extraction:
+
+```bash
+python run_remediation_only.py --report output/extraction_report_rlm_Prot_000.json
+```
+
+---
+
+## Local web stack (UI + worker)
+
+The UI only talks to Azure Storage. The worker needs OpenAI (and optionally ACS email).
+
+```bash
+# Terminal 1 — UI
+export AZURE_STORAGE_ACCOUNT=aiicfstorage
+# Use `az login` (or managed identity) with RBAC on the storage account
+streamlit run app.py
+
+# Terminal 2 — worker
+export AZURE_STORAGE_ACCOUNT=aiicfstorage
+export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+export AZURE_OPENAI_API_KEY=...
+export AZURE_OPENAI_DEPLOYMENT=gpt-5.4
+python worker.py
+```
+
+Upload a protocol in the UI; the worker picks up the queue message and writes results back to blob storage for download (and email, if configured).
+
+---
+
+## Azure deployment
+
+Typical layout (Canada Central, resource group `rgUHN-aihub`):
+
+| Component | Name / notes |
+|-----------|----------------|
+| UI Container App | `ca-uhn-icf` — Streamlit on port 8000, Entra Easy Auth, sticky sessions |
+| Worker Container Apps Job | `ca-uhn-aiicf-worker` — KEDA on queue `icf-jobs` |
+| Storage | `aiicfstorage` — queue, input/output blobs, jobs table |
+| Azure OpenAI | Resource `rebicf`, deployment e.g. `gpt-5.4` (worker only) |
+| Email (optional) | Azure Communication Services on the worker |
+| ACR | Image `rlm-icf:$TAG` built with `az acr build` (not local Docker) |
+
+Deploy sequence:
+
+```bash
+# 1. Initial UI / infra (see deploy.sh for resource names and sizing)
+export AZURE_OPENAI_API_KEY='...'
+./deploy.sh
+
+# 2. Storage + worker job; strip OpenAI secrets from the UI tier
+IMAGE_TAG=vX ./scripts/setup_azure_storage_worker.sh
+
+# 3. Streamlit ingress / sticky sessions
+./scripts/configure_azure_app.sh
+```
+
+Images are built in ACR via `az acr build`. The Dockerfile serves both UI and worker.
+
+---
+
+## Environment variables
+
+### UI (`app.py`)
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `AZURE_STORAGE_ACCOUNT` | Yes | Storage account name (default `aiicfstorage`) |
+
+Auth is keyless via managed identity / `DefaultAzureCredential`.
+
+### Worker (`worker.py`)
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `AZURE_STORAGE_ACCOUNT` | Yes | Same storage account |
+| `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint |
+| `AZURE_OPENAI_API_KEY` | Yes | API key |
+| `AZURE_OPENAI_DEPLOYMENT` | Yes | Model deployment (e.g. `gpt-5.4`) |
+| `AZURE_OPENAI_API_VERSION` | No | API version override |
+| `ACS_CONNECTION_STRING` | No | Enable completion email |
+| `ACS_SENDER_ADDRESS` | No | Verified sender address |
+| `ACS_SENDER_NAME` | No | Display name (default `UHN AI-Hub`) |
+| `ACS_REPLY_TO` | No | Reply-to (default `AIHub@uhn.ca`) |
+| `ICF_MAX_DEQUEUE` | No | Poison-message threshold (default `3`) |
+| `ICF_VISIBILITY_TIMEOUT` | No | Queue visibility seconds (default `5400`) |
+
+### Job store overrides (`icf/jobs.py`)
+
+| Variable | Default |
+|----------|---------|
+| `ICF_QUEUE_NAME` | `icf-jobs` |
+| `ICF_INPUT_CONTAINER` | `icf-input` |
+| `ICF_OUTPUT_CONTAINER` | `icf-output` |
+| `ICF_JOBS_TABLE` | `jobs` |
+| `ICF_RETENTION_HOURS` | `3` |
+| `ICF_STALE_HOURS` | `12` |
+
+### Local CLI (`.env`)
 
 ```env
-# Azure OpenAI (used by all backends + evaluation judge)
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-key
-AZURE_OPENAI_DEPLOYMENT=gpt-5.1
+AZURE_OPENAI_DEPLOYMENT=gpt-5.4
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
-
-# OpenAI (alternative — used when --backend openai)
-# OPENAI_API_KEY=sk-your-key
-
-# Azure AI Search (used by azure_ai_search backend)
-AZURE_SEARCH_ENDPOINT=https://your-search.search.windows.net
-AZURE_SEARCH_KEY=your-key
-AZURE_SEARCH_INDEX=your-index-name
-
-# Evaluation judge model override (optional, default: gpt-4o)
-# EVAL_JUDGE_MODEL=gpt-4o
 ```
 
-## Extraction Backends
+---
 
-The pipeline supports **4 extraction backends**, selectable via `--extraction-backend`:
-
-| Backend | Flag | How it works | LLM calls/section |
-|---------|------|--------------|--------------------|
-| **RLM** (default) | `rlm` | Iterative REPL: LLM writes Python code to search the protocol, executes it, refines, calls `FINAL_VAR()` | 1 (multi-iteration) |
-| **Naive** | `naive` | Full protocol text sent in a single LLM call per section | 1 |
-| **RAG** (local) | `rag` | BM25 + dense embeddings + cross-encoder reranking, then single LLM call | 1 |
-| **Azure AI Search** | `azure_ai_search` | Protocol pre-indexed in Azure AI Search, retrieved per section, then LLM call | 1 |
-
-### Running the Pipeline
-
-```bash
-# RLM backend (default) with OpenAI
-python run_pipeline.py \
-    --protocol data/Prot_000.pdf \
-    --registry data/standard_ICF_template_breakdown.json \
-    --verbose
-
-# Naive backend with Azure OpenAI
-python run_pipeline.py \
-    --protocol data/Prot_000.pdf \
-    --registry data/standard_ICF_template_breakdown.json \
-    --extraction-backend naive \
-    --backend azure_openai \
-    --azure-endpoint https://your-resource.openai.azure.com/ \
-    --azure-deployment gpt-5.1
-
-# RAG backend (local embeddings + reranking)
-python run_pipeline.py \
-    --protocol data/Prot_000.pdf \
-    --registry data/standard_ICF_template_breakdown.json \
-    --extraction-backend rag \
-    --backend azure_openai \
-    --azure-endpoint https://your-resource.openai.azure.com/ \
-    --azure-deployment gpt-5.1
-
-# Azure AI Search backend (protocol must be pre-indexed)
-python run_pipeline.py \
-    --protocol data/Prot_000.pdf \
-    --registry data/standard_ICF_template_breakdown.json \
-    --extraction-backend azure_ai_search \
-    --backend azure_openai \
-    --azure-endpoint https://your-resource.openai.azure.com/ \
-    --azure-deployment gpt-5.1
-
-# Extract specific sections only
-python run_pipeline.py \
-    --protocol data/Prot_000.pdf \
-    --registry data/standard_ICF_template_breakdown.json \
-    --sections 2.1 3 6 8
-```
-
-### Azure AI Search Setup
-
-To use the `azure_ai_search` backend:
-
-1. **Index your protocol** in Azure AI Studio: upload the PDF, Azure handles chunking and embedding automatically.
-2. **Note the index name** and set `AZURE_SEARCH_INDEX` in your `.env`.
-3. You can index multiple protocols into separate indexes and switch between them with `--azure-search-index`.
-
-## Evaluation Framework
-
-The pipeline includes an evaluation framework that scores AI-generated ICF sections using LLM-as-a-judge, aligned with the UHN AI-Generated ICF Evaluation Outline (v3, March 2026).
-
-Two evaluation modes are available:
-
-| Mode | Flag | How it works | Cost |
-|------|------|--------------|------|
-| **Combined** (default) | `--eval-mode combined` | 1 LLM call per section scores all rubrics at once via direct Azure OpenAI call | ~$12-15/run |
-| **Detailed** | `--eval-mode detailed` | 1 LLM call per rubric per section via [DeepEval](https://github.com/confident-ai/deepeval) GEval | ~$40-50/run |
-
-Both modes produce the same JSON output format and comparison table. Combined mode does not require DeepEval installed.
-
-### Evidence-Grounded Scoring
-
-The judge does **not** receive the full protocol text. Instead, it receives per section:
-
-- Extraction notes (what the backend found — placed first, used as primary context)
-- Verbatim evidence quotes retrieved from the protocol
-- Extraction confidence (`HIGH` / `MEDIUM` / `LOW`) and status (`FOUND` / `NOT_FOUND` / `PARTIAL` / `ERROR`)
-- **UHN registry context** for this section: task instructions, required UHN guideline language, and conditional suggested text
-- The REB-approved ground truth section (if `--ground-truth` is provided)
-- The full REB-approved ICF concatenated once as document-level context (so the judge understands the complete consent story)
-
-This keeps prompts focused and ensures the judge scores based on task completion and evidence grounding — not mechanical comparison against the ground truth.
-
-#### Judge Scoring Rules
-
-The judge applies 7 explicit rules to ensure accurate scoring:
-
-1. **Task scope** — evaluate whether the AI completed its task per the section instructions, not whether it matches the GT word for word
-2. **Required UHN language** — must be present and faithful to the guideline meaning; present = credit, missing or meaning-altered = penalize
-3. **Suggested text** — only penalize if the protocol supports it but the AI omitted it
-4. **GT extras** — do not penalize the AI for omitting GT content that goes beyond its task scope or what the protocol evidence supports
-5. **Placeholders** — `[PLEASE COMPLETE]`, `{{field}}`, `<<insert>>` where extraction notes confirm info was not found = correct abstention, not fabrication
-6. **All-signals verification** — use notes + quotes + GT together; do not call fabrication from missing quotes alone if notes confirm the content exists in the protocol
-7. **Genuine fabrication** — content not in evidence, notes, or required/suggested text that contradicts or exceeds the GT = penalized firmly
-
-### Routing Policy
-
-Before calling the judge, each section/rubric pair is routed through a configurable policy (`EvalPolicy` in `eval_rubrics.py`) that determines how to score it:
-
-| Routing Mode | When it applies | Effect |
-|---|---|---|
-| `FULL` | High confidence, strong extraction (including partial protocol + HIGH confidence) | Judge scores normally |
-| `SOFT` | Medium confidence, or partial protocol coverage with non-HIGH confidence | Judge is cautioned about extraction uncertainty |
-| `HARD_PENALTY` | Backend confirmed NOT_FOUND but AI generated concrete content | Fixed low score (0.15) — hallucination flag |
-| `SKIP` | Standard boilerplate, section not in protocol, extraction error, or correct abstention | Recorded as N/A — no judge call |
-
-Fidelity and Honesty rubrics additionally return two judge-assessed fields per section:
-- **Evidence Relevance** (`STRONG` / `PARTIAL` / `WEAK` / `IRRELEVANT`) — how well the retrieved quotes actually support this section
-- **Support Level** (`WITHIN` / `EXCEEDS` / `NO_EVIDENCE`) — whether the AI text stays within what the evidence supports or makes claims beyond it
-
-### Evaluation Dimensions (10 per-section rubrics + 1 document-level)
-
-**Ground Truth Comparison:**
-| Dimension | Method | Scope |
-|-----------|--------|-------|
-| Correctness vs approved ICF | LLM judge | All sections (requires `--ground-truth`) |
-
-**Task Performance (UHN Rubric Table 6):**
-| Dimension | Method | Scope |
-|-----------|--------|-------|
-| Fidelity to Protocol | LLM judge | All sections |
-| Honesty | LLM judge | All sections — checks fabrication, contradiction, misrepresentation, unclarity, and missing acknowledgement |
-| Over-inclusion | LLM judge | All sections |
-| Inclusive Language | LLM judge | All sections |
-| Reading Level (Flesch-Kincaid) | Deterministic (code) | Sections with 20+ words |
-| Language Quality | LLM judge | Sections with 20+ words — combined reading level + plain language + comprehensibility |
-
-**Effectiveness (UHN Rubric Table 7):**
-| Dimension | Method | Scope |
-|-----------|--------|-------|
-| Misleading Language | LLM judge | All sections |
-| Risks/Benefits/Voluntariness | LLM judge | Sections 7, 16, 18, 18.1, 18.2, 19, 20 only |
-| Tone (neutral, non-coercive) | LLM judge | All sections |
-
-**Document-Level (1 extra LLM call on full document):**
-| Dimension | Method | Scope |
-|-----------|--------|-------|
-| Document Quality | LLM judge | Full concatenated ICF — abbreviation redundancy, repetition, terminology consistency, cross-section coherence |
-
-Each dimension uses the exact **Excellent / Good / Borderline / Poor / Fail** scale from the UHN evaluation outline. Readability rubrics skip short fill-in fields (protocol number, sponsor name). Risks/Benefits/Voluntariness only runs on sections that discuss those topics. Standard boilerplate sections (e.g. signature blocks) are automatically skipped for grounding rubrics.
-
-### Running Evaluation
-
-The judge model is read automatically from `AZURE_OPENAI_DEPLOYMENT` in your `.env`. Output files are named to include the backend and protocol so runs never overwrite each other.
-
-```bash
-# Single backend, combined mode (default)
-python run_eval.py --reports rlm=output/extraction_report_rlm_Prot_000.json --ground-truth data/ground_truth_icf.docx
-
-# Compare multiple backends side by side
-python run_eval.py \
-    --reports \
-        rlm=output/extraction_report_rlm_Prot_000.json \
-        naive=output/extraction_report_naive_Prot_000.json \
-        rag=output/extraction_report_rag_Prot_000.json \
-        azure_ai_search=output/extraction_report_azure_ai_search_Prot_000.json \
-    --ground-truth data/ground_truth_icf.docx \
-    --verbose
-
-# Detailed mode (DeepEval GEval, 1 call per rubric per section)
-python run_eval.py \
-    --reports rlm=output/extraction_report_rlm_Prot_000.json \
-    --ground-truth data/ground_truth_icf.docx \
-    --eval-mode detailed
-
-# Evaluate specific sections only
-python run_eval.py \
-    --reports rlm=output/extraction_report_rlm_Prot_000.json \
-    --ground-truth data/ground_truth_icf.docx \
-    --sections 3 6 7 8
-```
-
-Output: a side-by-side comparison table printed to console and a JSON report saved to `output/eval_report_combined_<backends>_<protocol>.json`.
-
-### Generating a Review Document
-
-After running evaluation, generate a colour-coded Word document for human reviewers:
-
-```bash
-python run_eval_review.py \
-    --eval-report output/eval_report_combined_rlm_Prot_000.json \
-    --extraction-report output/extraction_report_rlm_Prot_000.json \
-    --ground-truth data/ground_truth_icf.docx
-```
-
-The review document contains, per section:
-- AI-generated text vs REB-approved ground truth side by side (blue / green headers)
-- Protocol evidence quotes retrieved by the backend
-- Per-rubric scores colour-coded by grade (green → red), with routing mode, evidence relevance, support level, and judge reasoning
-- A blank reviewer comment box for written feedback
-
-Output is saved to `output/review_<eval_report_stem>.docx`. `--ground-truth` is optional — omit it if you only want to review AI output and rubric scores without the ground truth column.
-
-## Project Structure
+## Project structure
 
 ```
-.env.example                 # Unified env var template (copy to .env)
-run_pipeline.py              # CLI entry point for ICF generation
-run_eval.py                  # CLI entry point for evaluation
-run_eval_review.py           # CLI entry point for review DOCX generation
+app.py                       # Streamlit UI (enqueue / poll / download)
+worker.py                    # Queue consumer — runs ICFPipeline
+run_pipeline.py              # Local/CLI pipeline entry point
+run_remediation_only.py      # Re-run harmonize/review/remediate from a JSON report
+deploy.sh                    # Initial Azure Container Apps deploy
+scripts/
+  setup_azure_storage_worker.sh   # Queue, worker job, storage RBAC
+  configure_azure_app.sh          # Streamlit ingress tuning
 
 icf/
-  pipeline.py                # Main orchestrator
-  ingest.py                  # Protocol PDF/DOCX parser
-  registry.py                # ICF template registry loader (JSON/CSV)
-  types.py                   # Data types (TemplateVariable, ExtractionResult, etc.)
-  runtime_injections.py      # User-flag study-context injections (US-funding, SDM)
-  validate.py                # Quote verification + reading level check
-  assemble.py                # Marked-up ICF DOCX + JSON report generator
-  clean_icf.py               # Draft ICF DOCX generator (UHN publication layout)
+  pipeline.py                # Orchestrator (all stages)
+  jobs.py                    # Azure queue + blob + table job store
+  ingest.py                  # Protocol PDF/DOCX loader
+  registry.py                # Template registry loader
+  runtime_injections.py      # US-funding / SDM injections
+  extract.py                 # RLM extraction engine
+  prompts.py                 # Extraction prompts
+  harmonize.py               # Section-group harmonization
+  validate.py                # Quote / meta-commentary validation
+  review.py                  # Plain-language review
+  remediate.py               # Auto-remediation of review flags
+  assemble.py                # Marked-up DOCX + JSON report
+  clean_icf.py               # Draft DOCX (UHN publication layout)
+  types.py                   # Shared data types
+  plain_language.py          # Shared plain-language guidelines
 
-  # Extraction backends
-  extract.py                 # RLM extraction engine (default)
-  prompts.py                 # RLM extraction prompts
-  naive_extract.py           # Naive full-context extraction engine
-  naive_prompts.py           # Naive extraction prompts
-  rag_extract.py             # Local RAG extraction engine
-  rag_index.py               # BM25 + dense embedding index
-  rag_query.py               # Multi-query expansion
-  rag_rerank.py              # Cross-encoder reranking
-  rag_prompts.py             # RAG extraction prompts
-  azure_search_extract.py    # Azure AI Search extraction engine
-  azure_search_prompts.py    # Azure AI Search prompts
-
-  # Evaluation
-  eval_rubrics.py            # 10+1 rubric definitions + EvalPolicy routing (ScoringMode: FULL/SOFT/HARD_PENALTY/SKIP)
-  eval_combined.py           # Combined evaluator (1 LLM call/section, all rubrics + evidence grounding)
-  eval_ground_truth.py       # Ground truth DOCX parser
-  eval_runner.py             # Evaluation engine (combined + detailed/DeepEval modes)
-  eval_model.py              # Azure OpenAI judge wrapper for DeepEval
-  eval_review.py             # Review DOCX generator (colour-coded per-section layout)
-
+rlm/                         # Recursive Language Models library
 data/
-  standard_ICF_template_breakdown.json   # ICF template registry
-  UHN_logo.png                           # Logo for the draft ICF header
-
-EvalRubric/
-  AI-Generated ICF Evaluation Outline - v3 - March2026.docx  # Evaluation criteria
-
-output/                      # Generated at runtime
-  draft_icf_*.docx           # UHN-branded draft ICF for study-team review
-  marked_up_icf_*.docx       # Annotated ICF (evidence, status, review flags)
-  extraction_report_*.json   # Full structured extraction data
-  eval_report_combined_<backends>_<protocol>.json   # Evaluation report (combined mode)
-  eval_report_detailed_<backends>_<protocol>.json   # Evaluation report (detailed/DeepEval mode)
-  review_<eval_report_stem>.docx                    # Colour-coded review document for human reviewers
+  UHN_standard_ICF_template_breakdown_new.json
+  minimal_risk_ICF_template_breakdown.json
+  UHN_logo.png
 ```
 
-## Based On
+---
+
+## Based on
 
 This project builds on the [Recursive Language Models (RLM)](https://arxiv.org/abs/2512.24601) framework. If you use this work, please cite:
 
