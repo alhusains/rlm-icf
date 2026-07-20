@@ -50,6 +50,9 @@ MARKER_REQUIRED_SUGGESTED = (
 MARKER_OPTIONAL_SUGGESTED = (
     "[Please complete using the below suggested text, if relevant to this study.]"
 )
+MARKER_ADD_OTHER_ORGS = (
+    "[Add any other organizations with direct access to participant records, if applicable]"
+)
 
 _AI_DISCLAIMER = (
     "Parts of the initial draft of this consent form were created with help from "
@@ -60,6 +63,9 @@ _AI_DISCLAIMER = (
 
 _CONTENT_STATUSES = {"FOUND", "PARTIAL", "STANDARD_TEXT"}
 _BULLET_RE = re.compile(r"^[•\-–\*·]\s+")
+_INLINE_MARKER_RE = re.compile(
+    rf"({re.escape(MARKER_PLEASE_COMPLETE)}|{re.escape(MARKER_ADD_OTHER_ORGS)})"
+)
 
 _TESTS_PROCEDURES_SECTION_ID = "13.6"
 _TESTS_PROCEDURES_NOT_FOUND_SUGGESTED = (
@@ -1214,28 +1220,37 @@ def _add_text_runs(
     color: RGBColor | None,
     highlight_markers: bool,
 ) -> None:
-    """Append runs to *p*, highlighting ``[PLEASE COMPLETE]`` in bold yellow."""
-    if not highlight_markers or MARKER_PLEASE_COMPLETE not in text:
-        r = p.add_run(text)
-        r.font.name = _FONT
-        r.font.size = Pt(_BODY_PT)
-        if color is not None:
-            r.font.color.rgb = color
-        return
-    parts = text.split(MARKER_PLEASE_COMPLETE)
-    for i, part in enumerate(parts):
-        if part:
-            r = p.add_run(part)
-            r.font.name = _FONT
-            r.font.size = Pt(_BODY_PT)
-            if color is not None:
-                r.font.color.rgb = color
-        if i < len(parts) - 1:
-            r = p.add_run(MARKER_PLEASE_COMPLETE)
-            r.font.name = _FONT
-            r.font.size = Pt(_BODY_PT)
-            r.bold = True
-            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    """Append runs to *p*, styling known inline edit markers."""
+    if (highlight_markers and MARKER_PLEASE_COMPLETE in text) or MARKER_ADD_OTHER_ORGS in text:
+        if _INLINE_MARKER_RE.search(text):
+            for part in _INLINE_MARKER_RE.split(text):
+                if not part:
+                    continue
+                if part == MARKER_PLEASE_COMPLETE and highlight_markers:
+                    r = p.add_run(part)
+                    r.font.name = _FONT
+                    r.font.size = Pt(_BODY_PT)
+                    r.bold = True
+                    r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                elif part == MARKER_ADD_OTHER_ORGS:
+                    r = p.add_run(part)
+                    r.font.name = _FONT
+                    r.font.size = Pt(_BODY_PT)
+                    r.italic = True
+                    r.font.color.rgb = _ANNOTATION_GREY
+                else:
+                    r = p.add_run(part)
+                    r.font.name = _FONT
+                    r.font.size = Pt(_BODY_PT)
+                    if color is not None:
+                        r.font.color.rgb = color
+            return
+
+    r = p.add_run(text)
+    r.font.name = _FONT
+    r.font.size = Pt(_BODY_PT)
+    if color is not None:
+        r.font.color.rgb = color
 
 
 def _add_content_block(
