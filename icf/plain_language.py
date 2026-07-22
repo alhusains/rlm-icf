@@ -14,7 +14,10 @@ PLAIN LANGUAGE — WHERE TO APPLY THE GUIDELINES:
       Always your own generated text. Follow all guidelines.
   • 'filled_template' field — there are TWO distinct types of text here:
       ✓ Text you fill into {{placeholders}}: follow all guidelines.
-      ✓ Text you write based on SUGGESTED ICF TEXT: follow all guidelines.
+      ✗ Fixed wording in SUGGESTED ICF TEXT (the text OUTSIDE {{...}} markers):
+          FOLLOW VERBATIM — do NOT paraphrase, rewrite, or restyle it.
+          Only modify when absolutely necessary to keep sentence structure and
+          meaning accurate after resolving placeholders/conditionals.
       ✗ Fixed wording in REQUIRED ICF TEXT (the text OUTSIDE {{...}} markers):
           COPY THIS VERBATIM — do NOT rephrase, rewrite, or restructure it,
           even if it does not match the guidelines. It is legally mandated language.
@@ -24,6 +27,10 @@ UHN_PLAIN_LANGUAGE_GUIDELINES = """\
 
 Vocabulary and Word Choice
 - Use short, familiar, and everyday words instead of long academic terms. The language should be at a grade 6 reading level.
+- Abbreviations (document-wide): on the FIRST occurrence of a term in the ICF, write the
+  full term followed by the abbreviation in parentheses, e.g. "Magnetic Resonance Imaging (MRI)".
+  On all later occurrences in the document, use the abbreviation alone (e.g. "MRI").
+  Never write the abbreviation first with the full term in parentheses.
 - Use simple alternatives for medical jargon: e.g. "high blood pressure" instead of "hypertension",
   "doctor" instead of "physician", "throwing up" instead of "vomiting". This is very important.
 - Explain abstract medical concepts using concrete examples, stories, or analogies.
