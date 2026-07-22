@@ -22,6 +22,8 @@ Key design choices:
     search strategy failures, so a single retry is usually sufficient.
 """
 
+import os
+
 from icf.debug_logger import ICFDebugLogger
 from icf.extract import parse_extraction_json
 from icf.naive_prompts import build_naive_messages
@@ -38,7 +40,7 @@ class NaiveExtractionEngine:
 
     def __init__(
         self,
-        model_name: str = "gpt-5.1",
+        model_name: str = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1"),
         backend: str = "openai",
         backend_kwargs: dict | None = None,
         max_retries: int = 2,

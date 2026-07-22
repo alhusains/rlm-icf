@@ -26,6 +26,7 @@ class AzureOpenAIClient(BaseLM):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         azure_deployment: str | None = None,
+        seed: int | None = None,
         **kwargs,
     ):
         super().__init__(model_name=model_name, **kwargs)
@@ -62,6 +63,8 @@ class AzureOpenAIClient(BaseLM):
         )
         self.model_name = model_name
         self.azure_deployment = azure_deployment
+        self.seed = seed
+        self._printed_fingerprint = False
 
         # Per-model usage tracking
         self.model_call_counts: dict[str, int] = defaultdict(int)
@@ -81,10 +84,11 @@ class AzureOpenAIClient(BaseLM):
         if not model:
             raise ValueError("Model name is required for Azure OpenAI client.")
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-        )
+        create_kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        if self.seed is not None:
+            create_kwargs["seed"] = self.seed
+
+        response = self.client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
         return response.choices[0].message.content
 
@@ -102,10 +106,11 @@ class AzureOpenAIClient(BaseLM):
         if not model:
             raise ValueError("Model name is required for Azure OpenAI client.")
 
-        response = await self.async_client.chat.completions.create(
-            model=model,
-            messages=messages,
-        )
+        create_kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        if self.seed is not None:
+            create_kwargs["seed"] = self.seed
+
+        response = await self.async_client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
         return response.choices[0].message.content
 
@@ -123,6 +128,14 @@ class AzureOpenAIClient(BaseLM):
         # Track last call for handler to read
         self.last_prompt_tokens = usage.prompt_tokens
         self.last_completion_tokens = usage.completion_tokens
+
+        # Surface the backend fingerprint once per client instance so runs can be
+        # compared: a changed system_fingerprint means Azure altered the serving
+        # backend, which breaks seed-based reproducibility regardless of our settings.
+        if not self._printed_fingerprint:
+            fingerprint = getattr(response, "system_fingerprint", None)
+            print(f"[AZURE] model={model} seed={self.seed} system_fingerprint={fingerprint}")
+            self._printed_fingerprint = True
 
     def get_usage_summary(self) -> UsageSummary:
         model_summaries = {}

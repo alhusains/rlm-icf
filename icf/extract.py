@@ -8,6 +8,7 @@ JSON with evidence and grounding.
 
 import ast
 import json
+import os
 import re
 
 from icf.debug_logger import ICFDebugLogger
@@ -190,7 +191,7 @@ class ExtractionEngine:
 
     def __init__(
         self,
-        model_name: str = "gpt-5.1",
+        model_name: str = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1"),
         backend: str = "openai",
         backend_kwargs: dict | None = None,
         max_iterations: int = 20,
