@@ -122,7 +122,13 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         prompt += f"ICF TEMPLATE TEXT:\n{var.required_text}\n\n"
 
     if var.suggested_text:
-        prompt += f"SUGGESTED TEXT (adapt to this study; apply the symbol rules above):\n{var.suggested_text}\n\n"
+        prompt += (
+            "SUGGESTED TEXT (follow verbatim; apply the symbol rules above. "
+            "Only modify when absolutely necessary to keep sentence structure "
+            "and meaning accurate after resolving placeholders/conditionals — "
+            "do NOT paraphrase or rewrite for style):\n"
+            f"{var.suggested_text}\n\n"
+        )
 
     prompt += (
         "ENVIRONMENT NOTES:\n"

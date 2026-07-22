@@ -56,7 +56,7 @@ class ICFPipeline:
         template_path: str,
         template_docx_path: str | None = None,
         output_dir: str = "output",
-        model_name: str = "gpt-5.1",
+        model_name: str = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1"),
         backend: str = "openai",
         backend_kwargs: dict | None = None,
         extraction_backend: str = "rlm",

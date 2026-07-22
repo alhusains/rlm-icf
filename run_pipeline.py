@@ -105,8 +105,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.4",
-        help="LLM model name (default: gpt-5.4).",
+        default=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.6-sol"),
+        help=(
+            "LLM model name (default: AZURE_OPENAI_DEPLOYMENT env var, "
+            "falling back to gpt-5.6-sol). Keeping this in sync with "
+            "AZURE_OPENAI_DEPLOYMENT avoids mislabeled usage/logs when you "
+            "switch models by only editing .env."
+        ),
     )
     parser.add_argument(
         "--backend",
@@ -177,6 +182,17 @@ def main() -> int:
         type=int,
         default=None,
         help="Max output tokens per LLM call (default: model default). Increase if responses are being truncated.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help=(
+            "Seed passed to the LLM backend for reproducibility across runs (default: 42). "
+            "Currently only honored by --backend azure_openai. Determinism is best-effort — "
+            "the API may still vary, especially if Azure changes the serving backend "
+            "(watch the printed system_fingerprint)."
+        ),
     )
     parser.add_argument(
         "--verbose",
@@ -434,6 +450,8 @@ def main() -> int:
     backend_kwargs: dict = {}
     if args.max_tokens is not None:
         backend_kwargs["max_tokens"] = args.max_tokens
+    if args.seed is not None:
+        backend_kwargs["seed"] = args.seed
     if args.base_url is not None:
         backend_kwargs["base_url"] = args.base_url
     if args.api_key is not None:

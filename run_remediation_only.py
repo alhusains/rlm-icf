@@ -150,8 +150,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.4",
-        help="LLM model name (default: gpt-5.4).",
+        default=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4"),
+        help="LLM model name (default: AZURE_OPENAI_DEPLOYMENT env var, falling back to gpt-5.4).",
     )
     parser.add_argument(
         "--backend",

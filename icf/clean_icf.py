@@ -62,7 +62,17 @@ _AI_DISCLAIMER = (
 )
 
 _CONTENT_STATUSES = {"FOUND", "PARTIAL", "STANDARD_TEXT"}
-_BULLET_RE = re.compile(r"^[•\-–\*·]\s+")
+# Top-level and nested list markers used in ICF drafts (UHN templates use "o" for sub-bullets).
+_BULLET_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)"
+    r"(?P<marker>[•\-–\*·]|[oO](?=\s))"
+    r"\s+"
+    r"(?P<content>.*)$"
+)
+_BULLET_GLYPHS = ("\u2022", "\u25E6", "\u25AA")  # • ◦ ▪
+_BULLET_BASE_INDENT_CM = 1.0
+_BULLET_HANGING_CM = 0.5
+_BULLET_NEST_STEP_CM = 0.75
 _INLINE_MARKER_RE = re.compile(
     rf"({re.escape(MARKER_PLEASE_COMPLETE)}|{re.escape(MARKER_ADD_OTHER_ORGS)})"
 )
@@ -391,7 +401,7 @@ def _write_validation_intro_page(doc: Document) -> None:
         ("PARTIAL", None),
         (
             "NOT_FOUND",
-            "No relevant information was located in the protocol. You must complete this section.",
+            "No relevant information was located in the protocol. You must complete this section, if applicable.",
         ),
         (
             "SKIPPED",
@@ -803,6 +813,20 @@ def _add_validation_placeholder(
     label = _resolve_section_placeholder_label(var, optional=optional)
     _add_highlighted_placeholder(doc, label)
 
+    # Co-Investigators: surface the UHN disclaimer (instructions) before suggested text
+    # so the study team sees that listing co-investigators is generally discouraged.
+    if var is not None and var.section_id == "2.4" and (var.instructions or "").strip():
+        p_inst = doc.add_paragraph()
+        p_inst.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p_inst.paragraph_format.space_before = Pt(2)
+        p_inst.paragraph_format.space_after = Pt(2)
+        p_inst.paragraph_format.left_indent = Cm(0.5)
+        r_inst = p_inst.add_run(var.instructions.strip())
+        r_inst.font.name = _FONT
+        r_inst.font.size = Pt(_ANNOTATION_PT)
+        r_inst.italic = True
+        r_inst.font.color.rgb = _ANNOTATION_GREY
+
     suggested = _section_suggested_text(var, ext)
     if suggested:
         p2 = doc.add_paragraph()
@@ -961,6 +985,14 @@ def _write_signature_pages(
 
     _add_blank(doc)
     _add_blank(doc)
+
+    # Attestation for the person conducting the consent discussion (UHN signature page).
+    _body_line(
+        doc,
+        "I have explained to the above-named participant the nature and purpose, "
+        "the potential benefits, and possible risks of participation in this study. "
+        "All questions that have been raised about this study have been answered.",
+    )
     _add_blank(doc)
 
     # --- Signature block 2: Person Conducting Consent ---
@@ -1176,11 +1208,16 @@ def _parse_markdown_table(table_text: str) -> list[list[str]]:
 
 
 def _add_table_block(
-    doc: Document, rows: list[list[str]], color: RGBColor | None = None
+    doc: Document,
+    rows: list[list[str]],
+    color: RGBColor | None = None,
+    highlight_markers: bool = False,
 ) -> None:
     """Insert a bordered Word table from parsed Markdown rows.
 
     The first row is rendered as a bold header with light-grey shading.
+    When *highlight_markers* is True, ``[PLEASE COMPLETE]`` in cell text is
+    bold yellow (same as body paragraphs).
     """
     if not rows:
         return
@@ -1195,12 +1232,13 @@ def _add_table_block(
             cell = table.cell(ri, ci)
             cell.text = ""
             para = cell.paragraphs[0]
-            run = para.add_run(cell_text)
-            run.font.name = _FONT
-            run.font.size = Pt(_BODY_PT - 1)
-            run.bold = is_header
-            if color is not None:
-                run.font.color.rgb = color
+            _add_table_cell_runs(
+                para,
+                cell_text,
+                color=color,
+                highlight_markers=highlight_markers,
+                bold_all=is_header,
+            )
             if is_header:
                 tc_pr = cell._tc.get_or_add_tcPr()
                 shd = tc_pr.find(qn("w:shd"))
@@ -1212,6 +1250,40 @@ def _add_table_block(
                 shd.set(qn("w:fill"), "D9D9D9")
 
     _add_blank(doc)
+
+
+def _add_table_cell_runs(
+    p,
+    text: str,
+    *,
+    color: RGBColor | None,
+    highlight_markers: bool,
+    bold_all: bool,
+) -> None:
+    """Write cell text, highlighting inline ``[PLEASE COMPLETE]`` when requested."""
+    font_size = Pt(_BODY_PT - 1)
+    if highlight_markers and MARKER_PLEASE_COMPLETE in text and _INLINE_MARKER_RE.search(text):
+        for part in _INLINE_MARKER_RE.split(text):
+            if not part:
+                continue
+            r = p.add_run(part)
+            r.font.name = _FONT
+            r.font.size = font_size
+            if part == MARKER_PLEASE_COMPLETE:
+                r.bold = True
+                r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            else:
+                r.bold = bold_all
+                if color is not None:
+                    r.font.color.rgb = color
+        return
+
+    r = p.add_run(text)
+    r.font.name = _FONT
+    r.font.size = font_size
+    r.bold = bold_all
+    if color is not None:
+        r.font.color.rgb = color
 
 
 def _add_text_runs(
@@ -1253,6 +1325,28 @@ def _add_text_runs(
         r.font.color.rgb = color
 
 
+def _parse_bullet_line(line: str) -> tuple[int, str] | None:
+    """Return (nest_level, content) for a bullet/sub-bullet line, else None.
+
+    Nesting is inferred from leading whitespace (2 spaces or 1 tab ≈ one level).
+    The UHN ``o`` / ``O`` sub-bullet marker is treated as at least level 1.
+    """
+    match = _BULLET_LINE_RE.match(line.rstrip())
+    if not match:
+        return None
+    indent = match.group("indent").replace("\t", "  ")
+    ws_level = len(indent) // 2
+    marker = match.group("marker")
+    if marker.lower() == "o":
+        level = max(ws_level, 1)
+    else:
+        level = ws_level
+    content = (match.group("content") or "").strip()
+    if not content:
+        return None
+    return min(level, len(_BULLET_GLYPHS) - 1), content
+
+
 def _add_content_block(
     doc: Document,
     text: str,
@@ -1262,8 +1356,9 @@ def _add_content_block(
     """Write a block of extracted content, splitting on newlines.
 
     Segments containing Markdown tables (lines starting with |) are rendered
-    as proper Word tables.  Bullet lines become indented list items.  All other
-    lines are rendered as justified body paragraphs.
+    as proper Word tables.  Bullet lines become indented list items, with
+    nested / ``o`` sub-bullets indented one level deeper.  All other lines are
+    rendered as body paragraphs.
     *color* colours all runs when provided (confidence colour-coding).
     *highlight_markers* highlights ``[PLEASE COMPLETE]`` in bold yellow within the text.
     """
@@ -1271,28 +1366,32 @@ def _add_content_block(
         if kind == "table":
             rows = _parse_markdown_table(segment)
             if rows:
-                _add_table_block(doc, rows, color=color)
+                _add_table_block(
+                    doc, rows, color=color, highlight_markers=highlight_markers
+                )
                 continue
-        # Plain text — render line by line
+        # Plain text — render line by line (preserve leading whitespace for nest level)
         for line in segment.split("\n"):
-            stripped = line.strip()
-            if not stripped:
+            if not line.strip():
                 continue
-            if _BULLET_RE.match(stripped):
-                content = _BULLET_RE.sub("", stripped).strip()
+            bullet = _parse_bullet_line(line)
+            if bullet is not None:
+                level, content = bullet
+                glyph = _BULLET_GLYPHS[level]
+                left_cm = _BULLET_BASE_INDENT_CM + (level * _BULLET_NEST_STEP_CM)
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(2)
-                p.paragraph_format.left_indent = Cm(1.0)
-                p.paragraph_format.first_line_indent = Cm(-0.5)
-                _add_text_runs(p, "\u2022 " + content, color, highlight_markers)
+                p.paragraph_format.left_indent = Cm(left_cm)
+                p.paragraph_format.first_line_indent = Cm(-_BULLET_HANGING_CM)
+                _add_text_runs(p, f"{glyph} {content}", color, highlight_markers)
             else:
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(3)
-                _add_text_runs(p, stripped, color, highlight_markers)
+                _add_text_runs(p, line.strip(), color, highlight_markers)
 
 
 def _set_table_borders_none(table) -> None:

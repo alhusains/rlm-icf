@@ -188,7 +188,7 @@ class GlobalFixRule:
     """A document-wide fix rule extracted from Stage 8 cross-section notes.
 
     rule_type values:
-      define_abbreviation  -- expand an acronym on its first appearance
+      define_abbreviation  -- first document use: Full Term (ABB); later uses: ABB only
       standardize_term     -- replace an inconsistent term across sections
       fix_inconsistency    -- correct a factual/structural inconsistency
       note_only            -- acknowledged but not auto-applied (e.g. repetition)
