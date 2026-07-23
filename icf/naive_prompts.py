@@ -10,9 +10,13 @@ through the relevant protocol passages before committing to extraction values
 (chain-of-thought inside structured output).
 """
 
-from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
-from icf.types import TemplateVariable
+from icf.plain_language import (
+    PLAIN_LANGUAGE_SCOPE,
+    STUDY_TEAM_NOTES_GUIDANCE,
+    UHN_PLAIN_LANGUAGE_GUIDELINES,
+)
 from icf.runtime_injections import prompt_runtime_context
+from icf.types import TemplateVariable
 
 # ---------------------------------------------------------------------------
 # Shared symbol guide (same rules as the RLM prompt)
@@ -69,6 +73,8 @@ NAIVE_SYSTEM_PROMPT = (
     "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
     + PLAIN_LANGUAGE_SCOPE
     + UHN_PLAIN_LANGUAGE_GUIDELINES
+    + "\n\n"
+    + STUDY_TEAM_NOTES_GUIDANCE
     + "\n"
 )
 
@@ -111,7 +117,7 @@ _JSON_SCHEMA = """{
         {{"quote": "Exact verbatim quote from the protocol text", "page": "Page number (from --- PAGE X --- markers)", "section": "Protocol section heading if identifiable"}}
     ],
     "confidence": "HIGH" | "MEDIUM" | "LOW",
-    "notes": "Any caveats, items needing manual review, or decisions made during extraction."
+    "notes": "See STUDY TEAM NOTES GUIDANCE above for what belongs here."
 }"""
 
 

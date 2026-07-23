@@ -102,7 +102,7 @@ Protocol (PDF/DOCX)  +  ICF Template Registry (JSON)
 | **9 Remediate** | `icf/remediate.py` | Auto-patch HIGH (and eligible MEDIUM) flags. |
 | **Assemble** | `icf/assemble.py`, `icf/clean_icf.py` | Marked-up DOCX, draft DOCX, JSON report. |
 
-Production worker settings: `extraction_backend="rlm"`, `backend="azure_openai"`, review/harmonize/remediation **enabled**.
+Production worker settings: `extraction_backend="hybrid"`, `backend="azure_openai"`, review/harmonize/remediation **enabled**.
 
 CLI skip flags: `--skip-harmonize`, `--skip-review`, `--skip-remediation`, `--remediate-high-only`.
 
@@ -150,7 +150,7 @@ In the web UI these appear as checkboxes on the generation form.
 
 ## Outputs
 
-Files are named `{artifact}_{backend}_{protocol_stem}.{ext}` (production backend stem is `rlm`):
+Files are named `{artifact}_{backend}_{protocol_stem}.{ext}` (production backend stem is `hybrid`):
 
 | Artifact | Description |
 |----------|-------------|

@@ -18,6 +18,16 @@ from icf.types import ExtractionResult, TemplateVariable
 # Statuses whose content should be included in the review document.
 _REVIEWABLE_STATUSES = ("FOUND", "PARTIAL", "STANDARD_TEXT")
 
+# Top-level section group always protected from review flags. 2.x holds
+# cover-page fields (title, protocol #, study doctor, sponsor, emergency
+# contact) -- short factual identifiers, never subject to plain-language review.
+_REVIEW_PROTECTED_TOPS = frozenset({"2"})
+
+
+def _is_review_protected(section_id: str) -> bool:
+    top = (section_id or "").strip().split(".", 1)[0]
+    return top in _REVIEW_PROTECTED_TOPS
+
 # Rough chars-per-token estimate; used for soft token-budget enforcement.
 _CHARS_PER_TOKEN = 4
 # Default budget: ~100 000 tokens worth of assembled ICF text.
@@ -36,8 +46,10 @@ REVIEW_SYSTEM_PROMPT = (
     "  1. Return ONLY a JSON object in the exact schema requested. No prose outside the JSON.\n"
     "  2. Never suggest edits that constitute a rewrite. The 'suggestion' field must be brief "
     "guidance (e.g. 'Consider active voice: You will receive …'), not replacement text.\n"
-    "  3. Sections marked [STANDARD TEXT - DO NOT FLAG] are legally mandated verbatim wording. "
-    "Do NOT generate any flags for those sections regardless of reading level or style.\n"
+    "  3. Sections marked [STANDARD TEXT - DO NOT FLAG] are legally mandated verbatim wording, "
+    "and sections marked [PROTECTED FIELD - DO NOT FLAG] are short factual identifiers "
+    "(e.g. study title, protocol number, study doctor). Do NOT generate any flags for "
+    "those sections regardless of reading level or style.\n"
     "  4. The 'flagged_text' must be a short verbatim excerpt (≤ 30 words) copied exactly from "
     "the section content shown to you.\n"
     "  5. Focus on issues that the participant reading this form would actually notice: unclear "
@@ -62,6 +74,10 @@ REVIEW_SYSTEM_PROMPT = (
     "can fix the problem without omitting required facts.\n"
     "     • suggested_fix must replace only the flagged_text span (same facts, plainer words); "
     "the suggestion field stays brief guidance, not the replacement itself.\n"
+    "  8. section_id must be ONLY the bare ID token that appears right after 'SECTION ' in "
+    "that section's header, e.g. from '=== SECTION 9.2: RISKS ===' the section_id is '9.2' — "
+    "not 'SECTION 9.2' and not '9.2: RISKS'. Do not include the word SECTION, the colon, or "
+    "any of the heading text.\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -76,7 +92,7 @@ def build_icf_document_for_review(
     """Assemble the full ICF into flat text for the review LLM.
 
     Returns:
-        (assembled_document_text, standard_text_section_ids)
+        (assembled_document_text, protected_section_ids)
 
     The assembled text has the form::
 
@@ -90,10 +106,14 @@ def build_icf_document_for_review(
     Only sections with status FOUND, PARTIAL, or STANDARD_TEXT are included.
     Sections with status SKIPPED, NOT_FOUND, or ERROR are omitted from the
     review document (there is no generated text to review).
+
+    protected_section_ids covers both is_standard_text sections AND every
+    2.x cover-page field (title, protocol #, study doctor, sponsor, emergency
+    contact) -- neither may ever be flagged.
     """
     ext_map: dict[str, ExtractionResult] = {e.section_id: e for e in extractions}
 
-    standard_text_ids: set[str] = set()
+    protected_ids: set[str] = set()
     parts: list[str] = []
 
     # Iterate in registry order for natural document flow.
@@ -109,23 +129,25 @@ def build_icf_document_for_review(
             heading += f" — {var.sub_section}"
 
         header = f"=== SECTION {var.section_id}: {heading.upper()} ==="
+        text = ext.filled_template or ext.answer or ""
 
         if var.is_standard_text:
-            standard_text_ids.add(var.section_id)
-            text = ext.filled_template or ext.answer or ""
+            protected_ids.add(var.section_id)
             parts.append(f"{header}\n[STANDARD TEXT - DO NOT FLAG]\n{text.strip()}")
-        else:
-            text = ext.filled_template or ext.answer or ""
+        elif _is_review_protected(var.section_id):
+            protected_ids.add(var.section_id)
             if text.strip():
-                parts.append(f"{header}\n{text.strip()}")
+                parts.append(f"{header}\n[PROTECTED FIELD - DO NOT FLAG]\n{text.strip()}")
+        elif text.strip():
+            parts.append(f"{header}\n{text.strip()}")
 
     assembled = "\n\n".join(parts)
-    return assembled, standard_text_ids
+    return assembled, protected_ids
 
 
 def build_review_messages(
     icf_document: str,
-    standard_text_ids: set[str],
+    protected_section_ids: set[str],
     token_budget: int = _DEFAULT_TOKEN_BUDGET,
 ) -> list[dict]:
     """Build the [system, user] messages list for the review LLM call.
@@ -143,7 +165,7 @@ def build_review_messages(
         )
 
     protected_list = (
-        ", ".join(sorted(standard_text_ids)) if standard_text_ids else "(none)"
+        ", ".join(sorted(protected_section_ids)) if protected_section_ids else "(none)"
     )
 
     user_content = (
@@ -156,7 +178,7 @@ def build_review_messages(
         "{\n"
         '  "flags": [\n'
         "    {\n"
-        '      "section_id": "...",\n'
+        '      "section_id": "bare ID only, e.g. \'9.2\' — see rule 8 above",\n'
         '      "flagged_text": "short verbatim excerpt (≤ 30 words) from the section",\n'
         '      "issue_type": "REPETITION | PASSIVE_VOICE | SENTENCE_TOO_LONG | '
         'TERMINOLOGY_INCONSISTENCY | UNCLEAR | TONE | PLAIN_LANGUAGE_VIOLATION",\n'

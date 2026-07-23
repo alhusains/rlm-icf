@@ -1,10 +1,13 @@
 """
 Validation pipeline for ICF extractions.
 
-Three checks:
+Checks:
   1. Quote verification   - does the cited quote actually appear in the protocol?
   2. Meta-commentary      - does filled_template contain internal process notes?
-  3. Issue aggregation    - collect all problems for the report.
+  3. Quality gate         - is a result garbage / does it have fixable issues?
+     (shared by the RLM and hybrid extraction backends to decide when a
+     refinement/repair pass is worth running)
+  4. Issue aggregation    - collect all problems for the report.
 """
 
 import re
@@ -138,7 +141,100 @@ def check_meta_commentary(text: str) -> list[str]:
 
 
 # ------------------------------------------------------------------
-# 3. Aggregate validation
+# 3. Quality gate — shared by the RLM and hybrid extraction backends
+# ------------------------------------------------------------------
+
+
+def quality_score(result: ExtractionResult) -> int:
+    """Numeric quality score for comparing two results. Higher is better."""
+    status_score = {"FOUND": 30, "PARTIAL": 20, "NOT_FOUND": 5, "ERROR": 0}.get(
+        result.status, 0
+    )
+    confidence_score = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "N/A": 0}.get(
+        result.confidence, 0
+    )
+    return status_score + confidence_score
+
+
+def is_garbage_result(result: ExtractionResult) -> bool:
+    """Return True when the extraction produced non-JSON/policy-refusal output.
+
+    Two main causes:
+    1. Parser fallback: the LLM returned prose, the fallback parser wrapped it as
+       PARTIAL/LOW with empty filled_template and evidence.
+    2. Policy-refusal hallucination: model said "I cannot continue" / "REPL not
+       available" etc. These produce either garbage JSON or short prose answers.
+
+    NOT_FOUND results with empty fields are explicitly excluded — that is the
+    correct and expected output when the protocol contains no relevant information.
+    Flagging them as garbage would cause pointless full-extraction retries.
+    """
+    refusal_signals = [
+        "repl is not active",
+        "repl is not available",
+        "cannot run repl",
+        "cannot execute repl",
+        "i cannot continue",
+        "this interface does not",
+        "this chat interface",
+        "this interface cannot",
+        "i must stop here",
+    ]
+    raw = (result.raw_response or "").lower()
+    if any(sig in raw for sig in refusal_signals):
+        return True
+    # Empty filled_template + empty evidence = fallback-wrapped prose, but ONLY
+    # for FOUND or PARTIAL — NOT_FOUND legitimately has no template/evidence.
+    if result.status != "NOT_FOUND" and not result.filled_template and not result.evidence:
+        return True
+    return False
+
+
+def collect_quality_issues(result: ExtractionResult) -> list[str]:
+    """Return a list of quality problems that warrant a refinement/repair pass.
+
+    Only flags issues a follow-up LLM call can concretely fix:
+      1. Unfilled {{...}} or <<...>> markers left in filled_template.
+      2. Meta-commentary leaking into patient-facing filled_template.
+
+    Intentionally NOT flagging:
+    - LOW confidence alone: second passes do not reliably improve quality and
+      can produce worse output.  Low-confidence results are accepted as-is and
+      surfaced to the reviewer via the confidence annotations.
+    - PARTIAL status alone: means the protocol genuinely lacks the info.
+      A second pass won't find what isn't there, and just wastes iterations.
+    - Quote verification failures: Unicode chars, footnote numbers, and
+      sub-LLM paraphrasing cause false failures a follow-up call cannot fix.
+      Quote quality is surfaced in validate_extractions() instead.
+
+    Returns an empty list when the result is clean enough to keep as-is, or
+    when the status is one that a refinement/repair pass cannot improve.
+    """
+    if result.status in ("SKIPPED", "ERROR", "STANDARD_TEXT"):
+        return []
+
+    # NOT_FOUND: the model searched thoroughly and found nothing.
+    # A second pass won't find what doesn't exist.
+    if result.status == "NOT_FOUND":
+        return []
+
+    # Garbage fallback results are handled by the caller's fresh-attempt retry loop.
+    if is_garbage_result(result):
+        return []
+
+    issues: list[str] = []
+
+    unfilled = re.findall(r"\{\{[^}]+\}\}|<<[^>]+>>", result.filled_template)
+    for m in unfilled[:3]:
+        issues.append(f"unfilled marker in filled_template: {m}")
+
+    issues.extend(check_meta_commentary(result.filled_template))
+
+    return issues
+
+
+# ------------------------------------------------------------------
+# 4. Aggregate validation
 # ------------------------------------------------------------------
 
 

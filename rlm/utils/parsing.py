@@ -11,6 +11,22 @@ if TYPE_CHECKING:
     from rlm.environments.base_env import BaseEnv
 
 
+_FINAL_VAR_ERROR_RE = re.compile(r"^Error: Variable '.*' not found$")
+
+
+def is_final_var_error(final_answer: str) -> bool:
+    """Return True if *final_answer* is FINAL_VAR's own "variable not found" sentinel.
+
+    Every environment's FINAL_VAR helper (local_repl.py, docker_repl.py,
+    modal_repl.py, prime_repl.py) returns this exact string when the model
+    calls FINAL_VAR(name) for a name that was never assigned -- e.g. because
+    it was only set inside an if/else branch that did not run. That string is
+    a failed finish attempt, not a genuine answer, and must not be accepted
+    as one by the completion loop (see RLM.completion in rlm/core/rlm.py).
+    """
+    return bool(_FINAL_VAR_ERROR_RE.match(final_answer.strip()))
+
+
 def find_code_blocks(text: str) -> list[str]:
     """
     Find REPL code blocks in text wrapped in triple backticks and return List of content(s).

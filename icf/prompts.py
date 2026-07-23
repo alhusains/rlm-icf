@@ -5,7 +5,11 @@ The root_prompt is shown to the RLM orchestrator as its task. The protocol
 text is loaded separately as context_0 in the REPL environment.
 """
 
-from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
+from icf.plain_language import (
+    PLAIN_LANGUAGE_SCOPE,
+    STUDY_TEAM_NOTES_GUIDANCE,
+    UHN_PLAIN_LANGUAGE_GUIDELINES,
+)
 from icf.runtime_injections import prompt_runtime_context
 from icf.types import TemplateVariable
 
@@ -71,7 +75,7 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "    ],\n"
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
         '    "answer": "Plain-language summary of what was found by the extraction process (not patient-facing)",\n'
-        '    "notes": "Caveats or items needing the study team to review."\n'
+        '    "notes": "See STUDY TEAM NOTES GUIDANCE below for what belongs here."\n'
         "}"
     )
 
@@ -223,6 +227,8 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
         + PLAIN_LANGUAGE_SCOPE
         + UHN_PLAIN_LANGUAGE_GUIDELINES
+        + "\n\n"
+        + STUDY_TEAM_NOTES_GUIDANCE
         + "\n"
     )
 

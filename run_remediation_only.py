@@ -90,13 +90,6 @@ def _load_validations(data: list[dict]):
     return results
 
 
-def _normalize_section_id(raw: str) -> str:
-    """Strip accidental 'SECTION ' prefix from IDs stored in older report JSON files."""
-    import re
-
-    return re.sub(r"^(?:SECTION|Section|section)\s+", "", raw).strip()
-
-
 def _stem_from_report_path(report_path: str) -> str:
     report_basename = os.path.basename(report_path)
     for prefix in ("extraction_report_", "extraction_report"):

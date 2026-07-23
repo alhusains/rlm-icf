@@ -216,7 +216,7 @@ def _run_pipeline(job: dict, workdir: Path) -> tuple[list[tuple[str, bytes, str]
             "azure_endpoint": os.environ["AZURE_OPENAI_ENDPOINT"],
             "azure_deployment": os.environ["AZURE_OPENAI_DEPLOYMENT"],
         },
-        extraction_backend="rlm",
+        extraction_backend="hybrid",
         verbose=False,
         skip_review=False,
         us_funded=bool(job.get("us_funded", False)),

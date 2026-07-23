@@ -16,8 +16,8 @@ say "result_dict is already in scope — modify it to fix the issues below."
 
 import json
 
-from icf.types import ExtractionResult, TemplateVariable
 from icf.runtime_injections import prompt_runtime_context
+from icf.types import ExtractionResult, TemplateVariable
 
 
 def build_refinement_setup_code(first_result: ExtractionResult) -> str:
@@ -65,7 +65,10 @@ def build_refinement_prompt(
         '    "evidence": [{"quote": "Verbatim quote from protocol", "page": "X"}],\n'
         '    "confidence": "HIGH" | "MEDIUM" | "LOW",\n'
         '    "answer": "Plain language summary for the participant (Grade 6-8)",\n'
-        '    "notes": "Caveats or items needing the study team to review."\n'
+        '    "notes": "Direct, actionable instructions for the study team member finalizing '
+        "this section -- e.g. what exactly is missing and where it would come from, or what "
+        "each relevant template option says if a choice is unresolved. NOT a description of "
+        'your own reasoning (never things like \\"selected Option C because it fits the study\\")."\n'
         "}"
     )
 

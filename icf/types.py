@@ -1,6 +1,29 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+# Section IDs in this codebase are always a dotted-numeric token (e.g. "3", "9.2",
+# "21.1"). LLM-produced section_id values sometimes get contaminated with the
+# surrounding "=== SECTION N: HEADING ===" document header the model was shown --
+# either a leading "SECTION " prefix ("SECTION 3") or a trailing ": HEADING" suffix
+# ("3: INTRODUCTION"), or both. Strip either/both so lookups against the bare ID
+# (used everywhere else: TemplateVariable.section_id, ExtractionResult.section_id)
+# don't silently fail.
+_SECTION_PREFIX_RE = re.compile(r"^(?:SECTION|Section|section)\s+")
+_SECTION_ID_RE = re.compile(r"^\d+(?:\.\d+)*")
+
+
+def normalize_section_id(raw_id: str) -> str:
+    """Return the bare dotted-numeric section ID from a possibly-contaminated string.
+
+    Examples: "SECTION 3" -> "3", "3: INTRODUCTION" -> "3", "9.2" -> "9.2".
+    Falls back to the (prefix-stripped) input unchanged if it doesn't start with
+    a recognizable numeric ID, rather than silently discarding it.
+    """
+    cleaned = _SECTION_PREFIX_RE.sub("", str(raw_id)).strip()
+    match = _SECTION_ID_RE.match(cleaned)
+    return match.group(0) if match else cleaned
 
 
 @dataclass

@@ -126,15 +126,18 @@ def main() -> int:
     parser.add_argument(
         "--extraction-backend",
         default="rlm",
-        choices=["rlm", "naive", "rag", "azure_ai_search"],
+        choices=["rlm", "hybrid", "naive", "rag", "azure_ai_search"],
         help=(
             "Extraction strategy (default: rlm). "
-            "  rlm   — iterative RLM with code execution and semantic chunking (default). "
-            "  naive — full-context single LLM call per section (benchmarking baseline). "
-            "  rag   — retrieval-augmented generation with hybrid search. "
+            "  rlm    — iterative RLM with code execution and semantic chunking (default). "
+            "  hybrid — RLM evidence gathering (narrow prompt) followed by a single "
+            "structured drafting call; splits research from writing to reduce prompt "
+            "overload. "
+            "  naive  — full-context single LLM call per section (benchmarking baseline). "
+            "  rag    — retrieval-augmented generation with hybrid search. "
             "  azure_ai_search — RAG via Azure AI Search (protocol must be pre-indexed). "
             "This flag is orthogonal to --backend: e.g., "
-            "'--backend azure_openai --extraction-backend naive' is valid."
+            "'--backend azure_openai --extraction-backend hybrid' is valid."
         ),
     )
     parser.add_argument(

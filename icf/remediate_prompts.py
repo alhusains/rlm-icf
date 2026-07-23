@@ -2,8 +2,9 @@
 Prompt building for Stage 9 — Review Flag Remediation.
 
 Three public functions:
-  extract_locked_phrases      — extract literal mandatory phrases from required_text
-                                so the validation step can check them after patching.
+  extract_locked_phrases      — extract literal mandatory phrases from a template
+                                text (required_text or suggested_text) so the
+                                validation step can check them after patching.
   build_global_rules_prompt   — Pass A prompt: parse cross_section_notes + flag list
                                 into a structured list[GlobalFixRule].
   build_patch_prompt          — Pass B prompt: rewrite one section to fix remediable
@@ -76,6 +77,47 @@ def _literal_phrases_from_text(text: str) -> list[str]:
     return phrases
 
 
+# Placeholders like {{will/may}} or {{study/clinical trial (a type of study
+# that involves research)}} present a small closed set of literal alternative
+# WORDINGS the drafter must pick between and copy verbatim -- unlike free-text
+# writing instructions such as {{insert name(s) of product/agent/device}} or
+# {{specify condition}}. Once the section is drafted, the alternative actually
+# used is a factual/classification choice (e.g. "clinical trial" vs "study"),
+# not a stylistic word the plain-language passes should be free to swap out --
+# lock it the same way <<Option N>> branches already are.
+_INSTRUCTIONAL_PLACEHOLDER_RE = re.compile(
+    r"\b(insert|specify|describe|explain|list|choose|include)\b|e\.g\.?",
+    re.IGNORECASE,
+)
+_MAX_LITERAL_ALTERNATIVE_CHARS = 70
+_PLACEHOLDER_RE = re.compile(r"\{\{([^}]+)\}\}")
+
+
+def _literal_choice_alternatives(placeholder_body: str) -> list[str]:
+    """Return the literal alternative wordings for a closed-choice placeholder.
+
+    Returns [] if the placeholder reads as a free-text writing instruction
+    instead (contains a verb like "insert"/"specify"/"describe", or an
+    alternative too long to be a bare word/phrase choice).
+    """
+    if "/" not in placeholder_body:
+        return []
+    if _INSTRUCTIONAL_PLACEHOLDER_RE.search(placeholder_body):
+        return []
+    alternatives = [a.strip() for a in placeholder_body.split("/")]
+    if any(not a or len(a) > _MAX_LITERAL_ALTERNATIVE_CHARS for a in alternatives):
+        return []
+    return alternatives
+
+
+def _literal_choice_phrases_from_text(text: str) -> list[str]:
+    """Collect literal alternative wordings from every closed-choice placeholder in text."""
+    phrases: list[str] = []
+    for m in _PLACEHOLDER_RE.finditer(text):
+        phrases.extend(_literal_choice_alternatives(m.group(1)))
+    return phrases
+
+
 def _select_option_body(required_text: str, filled_template: str) -> str | None:
     """Pick the mutually exclusive option branch that best matches the draft."""
     bodies = _partition_exclusive_option_bodies(required_text)
@@ -105,7 +147,11 @@ def extract_locked_phrases(
 
     Splits required_text on template markers (placeholders, conditionals,
     OR alternatives, bullet markers) and returns the non-trivial literal
-    segments between them.
+    segments between them. Also pulls the chosen alternative out of any
+    closed-choice placeholder (e.g. {{will/may}}, {{study/clinical trial
+    (a type of study that involves research)}}) -- see
+    _literal_choice_alternatives -- since those are factual/classification
+    picks the drafter must copy verbatim, not free text.
 
     When ``filled_template`` is provided:
 
@@ -113,7 +159,8 @@ def extract_locked_phrases(
          are resolved to the branch whose literals appear in the draft (fixes
          sections like Health Canada Option 1 vs Option 2).
       2. Any phrase not present as a substring of the draft is dropped, so locks
-         from unused template branches never block remediation.
+         from unused template branches (or unused closed-choice alternatives)
+         never block remediation.
     """
     if not required_text or not required_text.strip():
         return []
@@ -127,6 +174,7 @@ def extract_locked_phrases(
             scope = _strip_directive_lines(required_text)
 
     phrases = _literal_phrases_from_text(scope)
+    phrases.extend(_literal_choice_phrases_from_text(scope))
 
     if filled_template and filled_template.strip():
         phrases = [p for p in phrases if p in filled_template]
@@ -245,9 +293,23 @@ _PATCH_SYSTEM = (
     "  2. This is participant-facing consent language. Preserve every clinical fact. "
     "Do not remove information the participant needs to make an informed decision.\n"
     "  3. Make the minimum change necessary to fix each issue. Do not rewrite "
-    "sentences that are not flagged.\n"
+    "sentences that are not flagged, EXCEPT when a fix would otherwise leave the section "
+    "incoherent -- e.g. a nearby sentence that only made sense because of a term/phrase "
+    "you just replaced elsewhere, or a defining sentence ('X means ...') that is no longer "
+    "needed because the term it defined was simplified away or removed. In those cases, "
+    "make the smallest possible adjustment to the affected nearby text (never to required "
+    "wording, never adding or removing facts) so the section reads as one coherent passage. "
+    "This also applies when several issues are flagged inside the SAME sentence: if applying "
+    "every suggested replacement in place would stack them into one long run-on (this is "
+    "common when a sentence lists two or more alternative options, e.g. 'treatment is X, or "
+    "Y'), split that sentence into shorter ones instead of inserting every fix into the same "
+    "clause -- e.g. one short sentence naming the options, then one sentence per option for "
+    "its detail. Never split or reorder text that is Required wording (see below).\n"
     "  4. When a suggested replacement is provided, use that wording for the flagged "
-    "span when possible.\n"
+    "span when possible. If the exact same replacement wording would then appear twice in "
+    "nearby sentences, vary the second occurrence (e.g. a short callback like 'these tests' "
+    "or 'this') instead of repeating the full phrase verbatim -- do not trade jargon for "
+    "robotic repetition.\n"
     "  5. When required wording is listed, keep each listed phrase unchanged "
     "word-for-word in the revised section (including punctuation).\n"
     "  6. When applying terminology rules, replace like-for-like. Do not change "
@@ -262,6 +324,10 @@ _PATCH_SYSTEM = (
     "  8. For PLAIN_LANGUAGE_VIOLATION flags without a suggested replacement, "
     "simplify jargon in the flagged span using the guidelines above while keeping "
     "required wording fragments intact.\n"
+    "  9. Before finalizing, re-read the full section once as connected prose (not "
+    "flag-by-flag): fix any redundancy, broken transitions, or leftover sentences your "
+    "edits created, while preserving every fact and every phrase listed in 'Required "
+    "wording' unchanged.\n"
 )
 
 
