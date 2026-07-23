@@ -19,6 +19,7 @@ from rlm.utils.parsing import (
     find_code_blocks,
     find_final_answer,
     format_iteration,
+    is_final_var_error,
 )
 from rlm.utils.prompts import (
     RLM_SYSTEM_PROMPT,
@@ -238,7 +239,18 @@ class RLM:
 
                 # Check if RLM is done and has a final answer.
                 final_answer = find_final_answer(iteration.response, environment=environment)
-                iteration.final_answer = final_answer
+
+                # FINAL_VAR resolved to its own "variable not found" sentinel -- e.g. the
+                # variable was only assigned inside an if/else branch that did not run this
+                # turn. This is a failed finish attempt, not a real answer: accepting it as
+                # the completion result would silently hand the caller an error string
+                # instead of retrying. Treat it as "no final answer yet" and tell the model
+                # why, so it can fix its code instead of repeating the same mistake.
+                final_var_failed = final_answer is not None and is_final_var_error(final_answer)
+                if final_var_failed:
+                    iteration.final_answer = None
+                else:
+                    iteration.final_answer = final_answer
 
                 # If logger is used, log the iteration.
                 if self.logger:
@@ -246,6 +258,23 @@ class RLM:
 
                 # Verbose output for this iteration
                 self.verbose.print_iteration(iteration, i + 1)
+
+                if final_var_failed:
+                    new_messages = format_iteration(iteration)
+                    new_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"FINAL_VAR error: {final_answer}. The variable was not "
+                                "defined in the REPL namespace when FINAL_VAR ran -- it may "
+                                "not have been assigned yet, or was only assigned inside an "
+                                "if/else branch that did not execute this turn. Fix your code "
+                                "and confirm the variable exists before calling FINAL_VAR again."
+                            ),
+                        }
+                    )
+                    message_history.extend(new_messages)
+                    continue
 
                 if final_answer is not None:
                     time_end = time.perf_counter()

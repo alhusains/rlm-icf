@@ -15,8 +15,9 @@ from icf.debug_logger import ICFDebugLogger
 from icf.prompts import build_extraction_prompt
 from icf.refine_prompts import build_refinement_prompt, build_refinement_setup_code
 from icf.types import Evidence, ExtractionResult, TemplateVariable
-from icf.validate import check_meta_commentary
+from icf.validate import collect_quality_issues, is_garbage_result, quality_score
 from rlm import RLM
+from rlm.utils.parsing import is_final_var_error
 from rlm.utils.prompts import RLM_SYSTEM_PROMPT
 
 
@@ -89,103 +90,6 @@ def _build_icf_system_prompt(protocol_length: int) -> str:
     return RLM_SYSTEM_PROMPT + addendum
 
 
-def _quality_score(result: ExtractionResult) -> int:
-    """Numeric quality score for comparing two results. Higher is better."""
-    status_score = {"FOUND": 30, "PARTIAL": 20, "NOT_FOUND": 5, "ERROR": 0}.get(
-        result.status, 0
-    )
-    confidence_score = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "N/A": 0}.get(
-        result.confidence, 0
-    )
-    return status_score + confidence_score
-
-
-def _is_garbage_result(result: ExtractionResult) -> bool:
-    """Return True when the RLM produced non-JSON/policy-refusal output.
-
-    Two main causes:
-    1. Parser fallback: RLM returned prose, the fallback parser wrapped it as
-       PARTIAL/LOW with empty filled_template and evidence.
-    2. Policy-refusal hallucination: model said "I cannot continue" / "REPL not
-       available" etc. These produce either garbage JSON or short prose answers.
-
-    NOT_FOUND results with empty fields are explicitly excluded — that is the
-    correct and expected output when the protocol contains no relevant information.
-    Flagging them as garbage would cause pointless full-extraction retries.
-    NOT_FOUND/LOW is handled instead by _collect_quality_issues → refinement pass.
-    """
-    refusal_signals = [
-        "repl is not active",
-        "repl is not available",
-        "cannot run repl",
-        "cannot execute repl",
-        "i cannot continue",
-        "this interface does not",
-        "this chat interface",
-        "this interface cannot",
-        "i must stop here",
-    ]
-    raw = (result.raw_response or "").lower()
-    if any(sig in raw for sig in refusal_signals):
-        return True
-    # Empty filled_template + empty evidence = fallback-wrapped prose, but ONLY
-    # for FOUND or PARTIAL — NOT_FOUND legitimately has no template/evidence.
-    if result.status != "NOT_FOUND" and not result.filled_template and not result.evidence:
-        return True
-    return False
-
-
-def _collect_quality_issues(
-    result: ExtractionResult,
-    variable: TemplateVariable,
-    protocol_text: str,
-) -> list[str]:
-    """Return a list of quality problems that warrant a refinement pass.
-
-    Only triggers refinement for issues the RLM can concretely fix:
-      1. Unfilled {{...}} or <<...>> markers left in filled_template.
-      2. Meta-commentary leaking into patient-facing filled_template.
-
-    Intentionally NOT triggering for:
-    - LOW confidence alone: second passes do not reliably improve quality and
-      can produce worse output.  Low-confidence results are accepted as-is and
-      surfaced to the reviewer via the confidence annotations.
-    - PARTIAL status alone: means the protocol genuinely lacks the info.
-      A second pass won't find what isn't there, and just wastes iterations.
-    - Quote verification failures: Unicode chars, footnote numbers, and
-      sub-LLM paraphrasing cause false failures the RLM cannot fix.
-      Quote quality is surfaced in the validate_extractions step instead.
-
-    Returns an empty list when the result is clean enough to keep as-is,
-    or when the status is one that refinement cannot improve.
-    """
-    if result.status in (
-        "SKIPPED",
-        "ERROR",
-        "STANDARD_TEXT",
-    ):
-        return []
-
-    # NOT_FOUND: the model searched thoroughly and found nothing.
-    # A second pass won't find what doesn't exist.
-    if result.status == "NOT_FOUND":
-        return []
-
-    # Garbage fallback results are handled by the fresh-RLM retry loop.
-    if _is_garbage_result(result):
-        return []
-
-    issues: list[str] = []
-
-    unfilled = re.findall(r"\{\{[^}]+\}\}|<<[^>]+>>", result.filled_template)
-    for m in unfilled[:3]:
-        issues.append(f"unfilled marker in filled_template: {m}")
-
-    issues.extend(check_meta_commentary(result.filled_template))
-
-    return issues
-
-
 class ExtractionEngine:
     """Drives per-variable extraction via fresh RLM calls."""
 
@@ -237,7 +141,7 @@ class ExtractionEngine:
         for attempt in range(1, self.max_retries + 1):
             result = self._run_rlm_extraction(protocol_text, variable)
 
-            if result.status != "ERROR" and _is_garbage_result(result):
+            if result.status != "ERROR" and is_garbage_result(result):
                 # Prose/policy-refusal wrapped as PARTIAL — treat as a retriable error.
                 print(
                     f"[EXTRACT] Section {variable.section_id}: attempt {attempt}/{self.max_retries} "
@@ -259,7 +163,7 @@ class ExtractionEngine:
 
             if result.status != "ERROR":
                 # Good structured result — run quality gate, optionally refine.
-                issues = _collect_quality_issues(result, variable, protocol_text)
+                issues = collect_quality_issues(result)
                 if issues:
                     print(
                         f"[REFINE] Section {variable.section_id}: "
@@ -380,14 +284,14 @@ class ExtractionEngine:
                 )
                 return first_result
 
-            if _is_garbage_result(refined):
+            if is_garbage_result(refined):
                 print(
                     f"[REFINE] Section {variable.section_id}: refinement returned "
                     "non-JSON/prose output — keeping original result."
                 )
                 return first_result
 
-            if _quality_score(refined) < _quality_score(first_result):
+            if quality_score(refined) < quality_score(first_result):
                 print(
                     f"[REFINE] Section {variable.section_id}: refined result is lower "
                     f"quality ({refined.status}/{refined.confidence} vs original "
@@ -592,7 +496,13 @@ def parse_extraction_json(raw: str) -> dict | None:
         return partial
 
     # 7. Fallback: the RLM returned free-form text instead of JSON.
-    #    Wrap it so the pipeline can still use the content.
+    #    Wrap it so the pipeline can still use the content -- UNLESS it is one of the
+    #    RLM environment's own internal error sentinels (e.g. a failed FINAL_VAR lookup).
+    #    Those are not research/drafting content and must propagate as a real failure so
+    #    the caller retries, instead of being silently treated as a low-confidence answer.
+    if is_final_var_error(stripped):
+        return None
+
     if len(stripped) > 20:
         return {
             "status": "PARTIAL",
