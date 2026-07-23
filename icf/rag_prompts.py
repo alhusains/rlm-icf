@@ -21,10 +21,14 @@ Design choices
 
 from __future__ import annotations
 
-from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
+from icf.plain_language import (
+    PLAIN_LANGUAGE_SCOPE,
+    STUDY_TEAM_NOTES_GUIDANCE,
+    UHN_PLAIN_LANGUAGE_GUIDELINES,
+)
 from icf.rag_index import Chunk
-from icf.types import TemplateVariable
 from icf.runtime_injections import prompt_runtime_context
+from icf.types import TemplateVariable
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -54,6 +58,8 @@ RAG_SYSTEM_PROMPT = (
     "PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
     + PLAIN_LANGUAGE_SCOPE
     + UHN_PLAIN_LANGUAGE_GUIDELINES
+    + "\n\n"
+    + STUDY_TEAM_NOTES_GUIDANCE
     + "\n"
 )
 
@@ -93,7 +99,7 @@ _JSON_SCHEMA_TEMPLATE = """{
         {"quote": "Exact verbatim quote from one of the retrieved passages", "page": "Page number from [Pages X-Y] label", "section": "Protocol section if identifiable"}
     ],
     "confidence": "HIGH" | "MEDIUM" | "LOW",
-    "notes": "Caveats, items needing manual review, or decisions made during extraction. Note if key information was absent from retrieved passages."
+    "notes": "See STUDY TEAM NOTES GUIDANCE above. Also note if key information was absent from the retrieved passages."
 }"""
 
 # ---------------------------------------------------------------------------

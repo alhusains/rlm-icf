@@ -8,8 +8,9 @@ BM25 + dense embeddings.
 
 from __future__ import annotations
 
-from icf.types import TemplateVariable
+from icf.plain_language import STUDY_TEAM_NOTES_GUIDANCE
 from icf.runtime_injections import prompt_runtime_context
+from icf.types import TemplateVariable
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -29,7 +30,9 @@ AZURE_SEARCH_SYSTEM_PROMPT = (
     "  - Every evidence quote must be a verbatim substring from one of the retrieved passages.\n"
     "  - Write the 'answer' field at a Grade 6 reading level (plain, patient-friendly language).\n"
     "  - The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
-    "  - Tables in retrieved passages contain important procedural data; read them carefully.\n"
+    "  - Tables in retrieved passages contain important procedural data; read them carefully.\n\n"
+    + STUDY_TEAM_NOTES_GUIDANCE
+    + "\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -68,7 +71,7 @@ _JSON_SCHEMA_TEMPLATE = """{
         {"quote": "Exact verbatim quote from one of the retrieved documents", "page": "Page number or document index if identifiable", "section": "Protocol section if identifiable"}
     ],
     "confidence": "HIGH" | "MEDIUM" | "LOW",
-    "notes": "Caveats, items needing manual review, or decisions made during extraction."
+    "notes": "See STUDY TEAM NOTES GUIDANCE above for what belongs here."
 }"""
 
 # ---------------------------------------------------------------------------

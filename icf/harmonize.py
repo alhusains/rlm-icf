@@ -202,9 +202,12 @@ class SectionGroupHarmonizer:
                         )
                     continue
 
-                # Safety: locked phrases from required_text must survive.
+                # Safety: locked phrases from required_text AND suggested_text must survive.
                 current_text = target.filled_template or target.answer or ""
                 locked = extract_locked_phrases(var.required_text, current_text)
+                for p in extract_locked_phrases(var.suggested_text, current_text):
+                    if p not in locked:
+                        locked.append(p)
                 if locked and not _all_phrases_present(revised_text, locked):
                     missing = [p for p in locked if p not in revised_text]
                     preview = "; ".join(f'"{p[:55]}"' for p in missing[:2])

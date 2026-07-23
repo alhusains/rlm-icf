@@ -16,9 +16,17 @@ After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
                MEDIUM only when issue_type is whitelisted or suggested_fix is set).
             2. They appear in the affected_section_ids of a non-note_only rule.
 
-  After patching, a programmatic safety check verifies that all literal phrases
-  from required_text survive verbatim.  If the check fails the patch is rejected
-  and the original text is kept (success=False in the audit log).
+  After each patch attempt, a programmatic safety check verifies that all
+  literal phrases from required_text AND suggested_text survive verbatim.  If
+  the check fails, the model gets one corrective retry naming exactly which
+  phrase(s) it dropped/altered, so a single overreaching edit doesn't discard
+  every other valid fix in the section.  If it still fails after retries, the
+  patch is rejected and the original text is kept (success=False in the audit
+  log).
+
+Section group 2.x (cover page fields: title, protocol #, study doctor,
+sponsor, emergency contact) is excluded from remediation scope entirely --
+these are short factual identifiers, never eligible for automatic patching.
 
 Design mirrors adapt.py: direct LLM calls (no RLM REPL loop), deep-copy safety,
 graceful failure never degrades an extraction.
@@ -43,6 +51,7 @@ from icf.types import (
     ReviewFlag,
     ReviewResult,
     TemplateVariable,
+    normalize_section_id,
 )
 from rlm.clients import get_client
 
@@ -55,6 +64,26 @@ _MEDIUM_AUTO_FIX_ISSUE_TYPES = frozenset(
         "PLAIN_LANGUAGE_VIOLATION",
     }
 )
+
+# Top-level section group always excluded from remediation. 2.x holds cover-page
+# fields (title, protocol #, study doctor, sponsor, emergency contact) -- short
+# factual identifiers that must never be auto-patched.
+_REMEDIATION_LOCKED_TOPS = frozenset({"2"})
+
+
+def _is_remediation_locked(section_id: str) -> bool:
+    top = (section_id or "").strip().split(".", 1)[0]
+    return top in _REMEDIATION_LOCKED_TOPS
+
+
+def _locked_phrases_for(var: TemplateVariable, current_text: str) -> list[str]:
+    """Literal phrases from required_text AND suggested_text that must survive
+    verbatim in the patched output (order-preserving union)."""
+    phrases = extract_locked_phrases(var.required_text, current_text)
+    for p in extract_locked_phrases(var.suggested_text, current_text):
+        if p not in phrases:
+            phrases.append(p)
+    return phrases
 
 
 def _is_remediable_medium(flag: ReviewFlag) -> bool:
@@ -122,16 +151,21 @@ class RemediationEngine:
         )
 
         # -- Compute remediation scope -----------------------------------
-        # HIGH-flagged section IDs (excluding standard_text sections).
-        # Normalize here as a backstop for review flags loaded from older reports
-        # where the Stage 8 LLM may have stored IDs with a "SECTION " prefix.
-        standard_ids = {v.section_id for v in variables if v.is_standard_text}
+        # HIGH-flagged section IDs (excluding standard_text and 2.x cover-page sections).
+        # Normalize here as a backstop -- review.py already normalizes section_id
+        # when parsing Stage 8 flags, but older cached ReviewResults (or a future
+        # caller that constructs ReviewFlags directly) may not have gone through it.
+        protected_ids = {
+            v.section_id
+            for v in variables
+            if v.is_standard_text or _is_remediation_locked(v.section_id)
+        }
 
         remediable_flagged_ids: set[str] = {
-            _normalize_section_id(f.section_id)
+            normalize_section_id(f.section_id)
             for f in review_result.flags
             if _is_remediable_flag(f, self.remediate_medium)
-            and _normalize_section_id(f.section_id) not in standard_ids
+            and normalize_section_id(f.section_id) not in protected_ids
         }
 
         # Sections pulled in by actionable global rules
@@ -139,7 +173,7 @@ class RemediationEngine:
             sid
             for rule in actionable_rules
             for sid in rule.affected_section_ids
-            if sid not in standard_ids
+            if sid not in protected_ids
         }
 
         scope = remediable_flagged_ids | rule_section_ids
@@ -184,18 +218,18 @@ class RemediationEngine:
             if not current_text.strip():
                 continue
 
-            locked_phrases = extract_locked_phrases(var.required_text, current_text)
+            locked_phrases = _locked_phrases_for(var, current_text)
 
             section_flags = [
                 f
                 for f in review_result.flags
-                if _normalize_section_id(f.section_id) == section_id
+                if normalize_section_id(f.section_id) == section_id
                 and _is_remediable_flag(f, self.remediate_medium)
             ]
             applicable_rules = [r for r in actionable_rules if section_id in r.affected_section_ids]
 
             original_text = current_text
-            patched_text = self._patch_section(
+            patched_text, failure_notes = self._patch_section(
                 section_id=section_id,
                 heading=var.get_display_name(),
                 filled_template=current_text,
@@ -213,28 +247,7 @@ class RemediationEngine:
                         original_text=original_text,
                         patched_text=original_text,
                         success=False,
-                        notes="LLM patch call failed after retries.",
-                    )
-                )
-                continue
-
-            if not _validate_patch(patched_text, locked_phrases):
-                # Find which phrases were dropped so the note is actionable.
-                missing = [p for p in locked_phrases if p not in patched_text]
-                missing_preview = "; ".join(f'"{p[:60]}"' for p in missing[:3])
-                records.append(
-                    RemediationRecord(
-                        section_id=section_id,
-                        high_flag_count=len(section_flags),
-                        global_rules_applied=[r.description for r in applicable_rules],
-                        original_text=original_text,
-                        patched_text=original_text,
-                        success=False,
-                        notes=(
-                            "Patch rejected: the fix would alter required/locked text. "
-                            f"Missing phrase(s): {missing_preview}. "
-                            "Human review required."
-                        ),
+                        notes=failure_notes,
                     )
                 )
                 continue
@@ -322,8 +335,19 @@ class RemediationEngine:
         locked_phrases: list[str],
         flags: list[ReviewFlag],
         applicable_rules: list[GlobalFixRule],
-    ) -> str | None:
-        """Make the patch LLM call for one section. Returns patched text or None."""
+    ) -> tuple[str | None, str]:
+        """Make the patch LLM call for one section, retrying on failure.
+
+        Two distinct failure modes are retried differently:
+          - Empty response: just re-issue the same prompt.
+          - Locked-phrase violation: rather than discarding every fix in the
+            section (throwing away good fixes because of one bad one), retry
+            with the offending draft plus the specific missing phrase(s) so the
+            model can redo it -- keeping required wording intact while still
+            applying whichever fixes don't touch it.
+
+        Returns (patched_text, failure_notes). failure_notes is empty on success.
+        """
         messages = build_patch_prompt(
             section_id=section_id,
             heading=heading,
@@ -333,6 +357,7 @@ class RemediationEngine:
             applicable_rules=applicable_rules,
         )
 
+        missing: list[str] = []
         for attempt in range(1, self.max_retries + 1):
             try:
                 raw = self.client.completion(messages)
@@ -340,32 +365,55 @@ class RemediationEngine:
                 print(f"[REMEDIATE] Patch {section_id} LLM error: {type(e).__name__}: {e}")
                 raw = None
 
-            if raw and raw.strip():
-                return raw.strip()
+            if not raw or not raw.strip():
+                if attempt < self.max_retries:
+                    print(
+                        f"[REMEDIATE] Patch {section_id} attempt {attempt}/{self.max_retries} "
+                        "returned empty. Retrying..."
+                    )
+                continue
+
+            raw = raw.strip()
+            missing = [p for p in locked_phrases if p not in raw]
+            if not missing:
+                return raw, ""
 
             if attempt < self.max_retries:
                 print(
                     f"[REMEDIATE] Patch {section_id} attempt {attempt}/{self.max_retries} "
-                    "returned empty. Retrying..."
+                    "dropped required wording. Retrying with corrective feedback..."
                 )
+                missing_block = "\n".join(f"  - {p}" for p in missing)
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw},
+                    {
+                        "role": "user",
+                        "content": (
+                            "That revision dropped or altered required wording that must "
+                            "survive unchanged. Missing/altered phrase(s):\n"
+                            f"{missing_block}\n\n"
+                            "Redo the revision: keep every phrase above exactly as written, "
+                            "word-for-word, and still apply the requested fixes to any other "
+                            "part of the text. If a specific fix cannot be made without "
+                            "touching one of these phrases, skip that fix rather than "
+                            "altering the required wording."
+                        ),
+                    },
+                ]
 
-        return None
+        if missing:
+            missing_preview = "; ".join(f'"{p[:60]}"' for p in missing[:3])
+            return None, (
+                "Patch rejected after retries: the fix would alter required/locked text. "
+                f"Missing phrase(s): {missing_preview}. Human review required."
+            )
+        return None, "LLM patch call failed after retries."
 
 
 # ---------------------------------------------------------------------------
 # JSON parsing helpers
 # ---------------------------------------------------------------------------
-
-# Prefixes the LLM sometimes adds before a bare section ID.
-_SECTION_PREFIX_RE = re.compile(r"^(?:SECTION|Section|section)\s+", re.IGNORECASE)
-
-
-def _normalize_section_id(raw_id: str) -> str:
-    """Strip accidental 'SECTION ' prefixes the LLM may add to section IDs.
-
-    E.g. 'SECTION 3' -> '3', 'Section 9.2' -> '9.2', '21.1' -> '21.1'.
-    """
-    return _SECTION_PREFIX_RE.sub("", str(raw_id)).strip()
 
 
 def _parse_global_rules_response(raw: str) -> list[GlobalFixRule] | None:
@@ -390,7 +438,7 @@ def _parse_global_rules_response(raw: str) -> list[GlobalFixRule] | None:
             GlobalFixRule(
                 rule_type=rule_type,
                 description=description,
-                affected_section_ids=[_normalize_section_id(s) for s in affected],
+                affected_section_ids=[normalize_section_id(s) for s in affected],
             )
         )
     return rules
@@ -439,15 +487,3 @@ def _extract_json_array(raw: str) -> list | None:
 
     return None
 
-
-# ---------------------------------------------------------------------------
-# Patch validation
-# ---------------------------------------------------------------------------
-
-
-def _validate_patch(patched_text: str, locked_phrases: list[str]) -> bool:
-    """Return True if every locked phrase still appears verbatim in patched_text."""
-    for phrase in locked_phrases:
-        if phrase not in patched_text:
-            return False
-    return True
