@@ -23,6 +23,12 @@ __pycache__
 .env
 .env.*
 !.env.example
+*.crt
+*.key
+*.pfx
+*.csr
+*.pem
+star_uhn_ca_*/
 
 # --- Local-only output / cache directories --------------------------------
 output/
@@ -48,6 +54,10 @@ test.py
 test_sentinel.py
 run_eval.py
 run_eval_review.py
+run_consistency_eval.py
+run_full_consistency_eval.py
+icf/consistency_eval.py
+app_old.py
 
 # --- Misc ------------------------------------------------------------------
 *.log
