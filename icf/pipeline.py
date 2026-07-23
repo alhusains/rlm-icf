@@ -34,7 +34,7 @@ from icf.types import (
 )
 from icf.validate import validate_extractions
 
-_VALID_EXTRACTION_BACKENDS = ("rlm", "naive", "rag", "azure_ai_search")
+_VALID_EXTRACTION_BACKENDS = ("rlm", "hybrid", "naive", "rag", "azure_ai_search")
 
 
 class ICFPipeline:
@@ -181,10 +181,10 @@ class ICFPipeline:
         # -- Stage 3: Extract --------------------------------------------------
         debug_logger: ICFDebugLogger | None = None
         if self.debug_log_dir:
-            if self.extraction_backend != "rlm":
+            if self.extraction_backend not in ("rlm", "hybrid"):
                 print(
-                    f"[DEBUG] --debug-log-dir is only supported for the 'rlm' backend "
-                    f"(current: '{self.extraction_backend}'). Ignoring."
+                    f"[DEBUG] --debug-log-dir is only supported for the 'rlm' and 'hybrid' "
+                    f"backends (current: '{self.extraction_backend}'). Ignoring."
                 )
             else:
                 debug_logger = ICFDebugLogger(log_dir=self.debug_log_dir)
@@ -381,6 +381,17 @@ class ICFPipeline:
         """Instantiate the correct extraction engine for self.extraction_backend."""
         if self.extraction_backend == "rlm":
             return ExtractionEngine(
+                model_name=self.model_name,
+                backend=self.backend,
+                backend_kwargs=self.backend_kwargs,
+                max_iterations=self.max_iterations,
+                verbose=self.verbose,
+                debug_logger=debug_logger,
+            )
+        if self.extraction_backend == "hybrid":
+            from icf.hybrid_extract import HybridExtractionEngine
+
+            return HybridExtractionEngine(
                 model_name=self.model_name,
                 backend=self.backend,
                 backend_kwargs=self.backend_kwargs,
