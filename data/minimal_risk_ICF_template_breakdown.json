@@ -151,7 +151,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Insert the study title verbatim, exactly as written on the protocol. Do not modify, rephrase, shorten, or simplify the title in any way — the AI must never alter the protocol title.\n\nOnly include a short title if the protocol itself provides one; if included, reproduce that short title verbatim as well. Do not invent, generate, or create a simplified/lay short title when the protocol does not contain one.",
+      "instructions": "Insert the study title verbatim, exactly as written on the protocol. Do not modify, rephrase, shorten, or simplify the title in any way — the AI must never alter the protocol title.\n\nOUTPUT FORMAT: Copy only the full title text itself. Do not prefix it with labels such as \"Study Title:\", \"Full title:\", \"TITLE:\", or any similar heading — those labels are already provided by the ICF template. Do not place anything else next to or after the full title (no parenthetical plain-language rewrite, no \"Simplified study title\", no invented lay title).\n\nOnly include a short title if the protocol itself provides one; if included, reproduce that short title verbatim as well on a separate line as \"Short Title: <verbatim short title>\". Do not invent, generate, or create a simplified/lay short title when the protocol does not contain one.",
       "required_text": "",
       "suggested_text": "",
       "suggested_text_format": "text"
