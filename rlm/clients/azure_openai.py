@@ -27,6 +27,7 @@ class AzureOpenAIClient(BaseLM):
         api_version: str | None = None,
         azure_deployment: str | None = None,
         seed: int | None = None,
+        reasoning_effort: str | None = None,
         **kwargs,
     ):
         super().__init__(model_name=model_name, **kwargs)
@@ -64,6 +65,7 @@ class AzureOpenAIClient(BaseLM):
         self.model_name = model_name
         self.azure_deployment = azure_deployment
         self.seed = seed
+        self.reasoning_effort = reasoning_effort
         self._printed_fingerprint = False
 
         # Per-model usage tracking
@@ -87,6 +89,8 @@ class AzureOpenAIClient(BaseLM):
         create_kwargs: dict[str, Any] = {"model": model, "messages": messages}
         if self.seed is not None:
             create_kwargs["seed"] = self.seed
+        if self.reasoning_effort is not None:
+            create_kwargs["reasoning_effort"] = self.reasoning_effort
 
         response = self.client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
@@ -109,6 +113,8 @@ class AzureOpenAIClient(BaseLM):
         create_kwargs: dict[str, Any] = {"model": model, "messages": messages}
         if self.seed is not None:
             create_kwargs["seed"] = self.seed
+        if self.reasoning_effort is not None:
+            create_kwargs["reasoning_effort"] = self.reasoning_effort
 
         response = await self.async_client.chat.completions.create(**create_kwargs)
         self._track_cost(response, model)
@@ -132,9 +138,18 @@ class AzureOpenAIClient(BaseLM):
         # Surface the backend fingerprint once per client instance so runs can be
         # compared: a changed system_fingerprint means Azure altered the serving
         # backend, which breaks seed-based reproducibility regardless of our settings.
+        # Also log reasoning_effort + first-call reasoning_tokens (proxy for whether
+        # the model is actually spending hidden reasoning tokens).
         if not self._printed_fingerprint:
             fingerprint = getattr(response, "system_fingerprint", None)
-            print(f"[AZURE] model={model} seed={self.seed} system_fingerprint={fingerprint}")
+            details = getattr(usage, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", None) if details else None
+            print(
+                f"[AZURE] model={model} seed={self.seed} "
+                f"reasoning_effort={self.reasoning_effort!r} "
+                f"reasoning_tokens={reasoning_tokens} "
+                f"system_fingerprint={fingerprint}"
+            )
             self._printed_fingerprint = True
 
     def get_usage_summary(self) -> UsageSummary:
