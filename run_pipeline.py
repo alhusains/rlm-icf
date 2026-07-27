@@ -198,6 +198,19 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+        help=(
+            "Reasoning effort for Azure GPT-5 reasoning deployments "
+            "(default: omit → Azure model default, typically medium for gpt-5.4). "
+            "Only honored by --backend azure_openai. Higher effort usually means "
+            "more hidden reasoning_tokens, slower/costlier calls, and often better "
+            "quality. Watch the printed [AZURE] line for reasoning_effort and "
+            "reasoning_tokens."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose RLM output (shows REPL interactions).",
@@ -455,6 +468,8 @@ def main() -> int:
         backend_kwargs["max_tokens"] = args.max_tokens
     if args.seed is not None:
         backend_kwargs["seed"] = args.seed
+    if args.reasoning_effort is not None:
+        backend_kwargs["reasoning_effort"] = args.reasoning_effort
     if args.base_url is not None:
         backend_kwargs["base_url"] = args.base_url
     if args.api_key is not None:

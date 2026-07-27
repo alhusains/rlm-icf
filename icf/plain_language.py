@@ -9,6 +9,17 @@ and the review/remediation prompt modules (review_prompts.py, remediate_prompts.
 Kept in its own module to avoid circular imports — every prompt file needs it.
 """
 
+# Cover-page fields (title, protocol #, study doctor, sponsor, emergency contact).
+# These must stay verbatim — never rewrite for plain language at extract/draft time.
+_COVER_PAGE_TOPS = frozenset({"2"})
+
+
+def is_cover_page_section(section_id: str) -> bool:
+    """True for any section in group 2.x (incl. a bare ``"2"``)."""
+    top = (section_id or "").strip().split(".", 1)[0]
+    return top in _COVER_PAGE_TOPS
+
+
 PLAIN_LANGUAGE_SCOPE = """\
 PLAIN LANGUAGE — WHERE TO APPLY THE GUIDELINES:
   • 'answer' field:
@@ -61,6 +72,29 @@ Vocabulary and Word Choice
   full term followed by the abbreviation in parentheses, e.g. "Magnetic Resonance Imaging (MRI)".
   On all later occurrences in the document, use the abbreviation alone (e.g. "MRI").
   Never write the abbreviation first with the full term in parentheses.
+  This applies to EVERY abbreviation you introduce, not just clinical/medical jargon --
+  institutional and organizational names are just as easy for a participant to lose track
+  of, e.g. "University Health Network (UHN)", "Health Canada (HC)", "Research Ethics Board
+  (REB)". If you write an abbreviation anywhere in your section, write out what it stands
+  for in full the first time, even if it seems like common knowledge to you.
+- Deciding whether a term should KEEP its name/abbreviation or be fully simplified away:
+    KEEP the name (glossed on first use, abbreviation after) when it names something the
+    participant will need to recognize on its own outside this document -- a specific scan
+    or test (MRI, CT, PET scan, ECG, X-ray), a named drug/agent (brand, generic, or study
+    drug code), a named device or system (e.g. "XVIVO Kidney Assist"), or a widely used
+    clinical term for a condition or organism (e.g. CMV, HIV). These appear on requisitions,
+    appointment cards, and in conversations with clinical staff -- dropping the real name
+    would leave the participant unable to recognize the same thing later.
+    SIMPLIFY AWAY ENTIRELY (plain-language description only, do not invent or keep an
+    abbreviation) when the term is only an internal protocol/strategy label with no
+    standalone meaning outside this study (e.g. a named treatment "strategy" or study arm
+    that exists purely as a study category) -- inventing an abbreviation the participant
+    will never see again just adds a term to memorize for no benefit.
+    Whichever you choose, never leave an abbreviation in the text with nothing anchoring
+    it: if you simplify away or rewrite the term an abbreviation stood for, remove the
+    abbreviation in the same edit. An abbreviation with no matching term nearby (e.g. a
+    leftover "(PET)" after "pre-emptive therapy" was paraphrased away) is a defect, not
+    a valid plain-language simplification.
 - Use simple alternatives for medical jargon: e.g. "high blood pressure" instead of "hypertension",
   "doctor" instead of "physician", "throwing up" instead of "vomiting". This is very important.
 - Explain abstract medical concepts using concrete examples, stories, or analogies.

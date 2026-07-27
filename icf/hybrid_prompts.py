@@ -29,6 +29,7 @@ from icf.plain_language import (
     PLAIN_LANGUAGE_SCOPE,
     STUDY_TEAM_NOTES_GUIDANCE,
     UHN_PLAIN_LANGUAGE_GUIDELINES,
+    is_cover_page_section,
 )
 from icf.runtime_injections import prompt_runtime_context
 from icf.types import TemplateVariable
@@ -284,7 +285,7 @@ SYMBOL_GUIDE = (
     "{{...}}, or standalone OR lines remaining.\n"
 )
 
-HYBRID_DRAFT_SYSTEM_PROMPT = (
+_HYBRID_DRAFT_SYSTEM_CORE = (
     "You are a Clinical Consent Form Writer producing Informed Consent Form (ICF) content "
     "for a clinical study at UHN (University Health Network).\n\n"
     "A separate research step has already searched the protocol for you. You will receive "
@@ -320,13 +321,22 @@ HYBRID_DRAFT_SYSTEM_PROMPT = (
     "directly relevant to WHAT TO WRITE below and appropriate for participant-facing consent "
     "material -- omit internal administrative, statistical, or sponsor-only details from the "
     "findings even if present, rather than writing around them.\n\n"
-    "UHN PLAIN LANGUAGE GUIDELINES -- apply these when generating any text:\n"
-    + PLAIN_LANGUAGE_SCOPE
-    + UHN_PLAIN_LANGUAGE_GUIDELINES
-    + "\n\n"
-    + STUDY_TEAM_NOTES_GUIDANCE
-    + "\n"
 )
+
+
+def _hybrid_draft_system_prompt(section_id: str) -> str:
+    """Stage B system prompt; omits plain-language guidelines for cover-page 2.x."""
+    plain_language = (
+        ""
+        if is_cover_page_section(section_id)
+        else (
+            "UHN PLAIN LANGUAGE GUIDELINES -- apply these when generating any text:\n"
+            + PLAIN_LANGUAGE_SCOPE
+            + UHN_PLAIN_LANGUAGE_GUIDELINES
+            + "\n\n"
+        )
+    )
+    return _HYBRID_DRAFT_SYSTEM_CORE + plain_language + STUDY_TEAM_NOTES_GUIDANCE + "\n"
 
 
 def draft_availability_note(evidence_bundle: dict) -> str:
@@ -457,6 +467,6 @@ def build_draft_messages(
     lines.append(f"OUTPUT -- respond with ONLY this JSON object, nothing else:\n{json_schema}")
 
     return [
-        {"role": "system", "content": HYBRID_DRAFT_SYSTEM_PROMPT},
+        {"role": "system", "content": _hybrid_draft_system_prompt(var.section_id)},
         {"role": "user", "content": "\n".join(lines)},
     ]

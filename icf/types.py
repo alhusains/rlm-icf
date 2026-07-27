@@ -208,13 +208,19 @@ class ReviewResult:
 
 @dataclass
 class GlobalFixRule:
-    """A document-wide fix rule extracted from Stage 8 cross-section notes.
+    """A document-wide fix rule to apply during Stage 9 remediation.
 
     rule_type values:
-      define_abbreviation  -- first document use: Full Term (ABB); later uses: ABB only
-      standardize_term     -- replace an inconsistent term across sections
-      fix_inconsistency    -- correct a factual/structural inconsistency
-      note_only            -- acknowledged but not auto-applied (e.g. repetition)
+      define_abbreviation  -- first document use: Full Term (ABB); later uses: ABB only.
+                              Generated ONLY by icf/abbreviations.py's deterministic scan,
+                              never by the Pass A LLM call (see remediate_prompts.py) --
+                              an LLM guess about WHERE to place a definition can contradict
+                              the scan's own placement and leave the abbreviation undefined
+                              everywhere.
+      standardize_term     -- replace an inconsistent term across sections; from Stage 8
+                              cross-section notes (Pass A)
+      fix_inconsistency    -- correct a factual/structural inconsistency; from Pass A
+      note_only            -- acknowledged but not auto-applied (e.g. repetition); from Pass A
     """
 
     rule_type: str
