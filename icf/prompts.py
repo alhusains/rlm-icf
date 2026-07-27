@@ -9,6 +9,7 @@ from icf.plain_language import (
     PLAIN_LANGUAGE_SCOPE,
     STUDY_TEAM_NOTES_GUIDANCE,
     UHN_PLAIN_LANGUAGE_GUIDELINES,
+    is_cover_page_section,
 )
 from icf.runtime_injections import prompt_runtime_context
 from icf.types import TemplateVariable
@@ -224,10 +225,16 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
             else ""
         )
         + "\n"
-        "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
-        + PLAIN_LANGUAGE_SCOPE
-        + UHN_PLAIN_LANGUAGE_GUIDELINES
-        + "\n\n"
+        + (
+            ""
+            if is_cover_page_section(var.section_id)
+            else (
+                "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
+                + PLAIN_LANGUAGE_SCOPE
+                + UHN_PLAIN_LANGUAGE_GUIDELINES
+                + "\n\n"
+            )
+        )
         + STUDY_TEAM_NOTES_GUIDANCE
         + "\n"
     )

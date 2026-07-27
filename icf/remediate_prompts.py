@@ -205,8 +205,7 @@ _GLOBAL_RULES_SYSTEM = (
     "Rules:\n"
     "  1. Return ONLY a JSON array. No prose outside the JSON.\n"
     "  2. Each item must have exactly these keys:\n"
-    '     "rule_type": one of "define_abbreviation" | "standardize_term" | '
-    '"fix_inconsistency" | "note_only"\n'
+    '     "rule_type": one of "standardize_term" | "fix_inconsistency" | "note_only"\n'
     '     "description": one clear sentence describing the fix.\n'
     '     "affected_section_ids": list of section ID strings where this rule applies.\n'
     "  3. Use rule_type 'note_only' for structural repetition — do NOT recommend "
@@ -216,13 +215,12 @@ _GLOBAL_RULES_SYSTEM = (
     "notes or flags. Do not invent rules.\n"
     "  5. Affected_section_ids must only contain IDs actually mentioned in the input.\n"
     "  6. If there are no actionable cross-section rules, return an empty array [].\n"
-    "  7. For rule_type 'define_abbreviation': abbreviations are DOCUMENT-WIDE. "
-    "The description MUST (a) use the form Full Term (ABB) — full term first, "
-    "abbreviation in parentheses — e.g. 'Magnetic Resonance Imaging (MRI)', "
-    "NEVER 'MRI (Magnetic Resonance Imaging)'; (b) name the single earliest "
-    "section_id that should introduce the definition; and (c) state that all "
-    "later affected sections must use the abbreviation alone. Put that first "
-    "section_id first in affected_section_ids.\n"
+    "  7. Do NOT produce rules about WHERE an abbreviation should be defined vs. used "
+    "bare (e.g. 'define X in section Y, use alone elsewhere') even if the notes mention "
+    "it -- that is handled separately by a deterministic document scan that always sees "
+    "the full final text, which you do not. An LLM guess about placement here can "
+    "contradict that scan and cause the abbreviation to end up undefined everywhere. "
+    "If the notes raise an abbreviation issue, leave it out entirely rather than guessing.\n"
 )
 
 
@@ -261,7 +259,7 @@ def build_global_rules_prompt(
         "Do NOT prefix them with 'SECTION' or any other word.\n"
         "[\n"
         "  {\n"
-        '    "rule_type": "define_abbreviation | standardize_term | fix_inconsistency | note_only",\n'
+        '    "rule_type": "standardize_term | fix_inconsistency | note_only",\n'
         '    "description": "One clear sentence describing the fix.",\n'
         '    "affected_section_ids": ["3", "9.2"]\n'
         "  }\n"
@@ -324,6 +322,14 @@ _PATCH_SYSTEM = (
     "  8. For PLAIN_LANGUAGE_VIOLATION flags without a suggested replacement, "
     "simplify jargon in the flagged span using the guidelines above while keeping "
     "required wording fragments intact.\n"
+    "  8b. Whenever you simplify or rewrite a phrase, check whether it contains a "
+    "parenthetical abbreviation, e.g. 'a pre-emptive therapy strategy (PET)'. Never leave "
+    "the abbreviation behind attached to unrelated words after paraphrasing away the term "
+    "it stood for (e.g. rewriting to 'early treatment if the virus appears (PET)' is WRONG "
+    "-- nothing left in that sentence means 'PET' anymore). Per the plain-language "
+    "guidelines' abbreviation section, either keep the term+abbreviation together (named "
+    "tests/scans/drugs/devices the participant must recognize later) or remove the term AND "
+    "its abbreviation together (internal study-only labels) -- never one without the other.\n"
     "  9. Before finalizing, re-read the full section once as connected prose (not "
     "flag-by-flag): fix any redundancy, broken transitions, or leftover sentences your "
     "edits created, while preserving every fact and every phrase listed in 'Required "
