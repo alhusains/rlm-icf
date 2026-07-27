@@ -299,11 +299,18 @@ class ICFPipeline:
                 1 for f in review_result.flags if _is_remediable_flag(f, remediate_medium)
             )
             has_notes = bool(review_result.cross_section_notes.strip())
-            if remediable_count > 0 or has_notes:
+            # Abbreviation consistency is checked deterministically (see
+            # icf/abbreviations.py) and must not depend on review having
+            # flagged something else first -- check it directly for gating.
+            from icf.abbreviations import find_abbreviation_fixes
+
+            has_abbreviation_issues = bool(find_abbreviation_fixes(extractions, final_variables))
+            if remediable_count > 0 or has_notes or has_abbreviation_issues:
                 print(
                     f"\n[REMEDIATE] Running Stage 9 remediation "
                     f"({high_count} HIGH, {medium_count} eligible MEDIUM flag(s), "
-                    f"cross-section notes: {bool(has_notes)}) ..."
+                    f"cross-section notes: {bool(has_notes)}, "
+                    f"abbreviation fixes: {has_abbreviation_issues}) ..."
                 )
                 remediator = RemediationEngine(
                     model_name=self.model_name,

@@ -311,9 +311,17 @@ def main() -> int:
             1 for f in review_result.flags if _is_remediable_flag(f, remediate_medium)
         )
         has_notes = bool(review_result.cross_section_notes.strip())
+        # Abbreviation consistency is checked deterministically (see
+        # icf/abbreviations.py) and must not depend on review having flagged
+        # something else first -- check it directly for gating.
+        from icf.abbreviations import find_abbreviation_fixes
 
-        if remediable_count == 0 and not has_notes:
-            print("\n[REMEDIATE] No remediable flags or cross-section notes — skipping.")
+        has_abbreviation_issues = bool(find_abbreviation_fixes(extractions, variables))
+
+        if remediable_count == 0 and not has_notes and not has_abbreviation_issues:
+            print(
+                "\n[REMEDIATE] No remediable flags, cross-section notes, or abbreviation issues — skipping."
+            )
         else:
             remediator = RemediationEngine(
                 model_name=args.model,
@@ -325,7 +333,8 @@ def main() -> int:
             print(
                 f"\n[REMEDIATE] Running Stage 9 remediation "
                 f"({high_count} HIGH, {medium_count} eligible MEDIUM flag(s), "
-                f"cross-section notes: {bool(has_notes)}) ..."
+                f"cross-section notes: {bool(has_notes)}, "
+                f"abbreviation fixes: {has_abbreviation_issues}) ..."
             )
             extractions, remediation_result = remediator.run_remediation(
                 extractions, variables, review_result

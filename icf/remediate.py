@@ -4,8 +4,18 @@ Stage 9 — Review Flag Remediation.
 After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
 
   Pass A  One LLM call on cross_section_notes + flags to extract a list of
-          GlobalFixRules (document-wide terminology / abbreviation fixes).
-          Structural repetition is acknowledged as note_only and never auto-fixed.
+          GlobalFixRules for document-wide terminology fixes (standardize_term,
+          fix_inconsistency; structural repetition is acknowledged as note_only
+          and never auto-fixed). It deliberately does NOT generate abbreviation
+          placement rules -- see icf/abbreviations.py's docstring for why an
+          LLM guess about WHERE to define an abbreviation can contradict the
+          deterministic scan below and leave it undefined everywhere.
+
+          A deterministic, regex-based scan (icf/abbreviations.py) separately
+          adds GlobalFixRules for redundant, out-of-order, or orphaned/garbled
+          abbreviation definitions -- this is the ONLY source of
+          define_abbreviation rules, since it is the only pass that sees the
+          whole final document at once and can decide placement consistently.
 
   Pass B  One LLM call per affected section to patch the filled_template:
             - addresses all HIGH flags for that section
@@ -38,6 +48,7 @@ import copy
 import json
 import re
 
+from icf.abbreviations import find_abbreviation_fixes
 from icf.remediate_prompts import (
     build_global_rules_prompt,
     build_patch_prompt,
@@ -143,6 +154,22 @@ class RemediationEngine:
 
         # -- Pass A: extract document-wide fix rules ----------------------
         global_rules = self._extract_global_rules(review_result, variables)
+
+        # Deterministic document-wide abbreviation check -- catches redundant
+        # or out-of-order abbreviation definitions across sections regardless
+        # of whether Stage 8 review happened to flag them (see abbreviations.py
+        # for why this needs to be mechanical rather than LLM-detected).
+        abbreviation_fixes = find_abbreviation_fixes(extractions, variables)
+        if abbreviation_fixes and self.verbose:
+            print(f"[REMEDIATE] Abbreviation check: {len(abbreviation_fixes)} fix(es) needed.")
+        global_rules.extend(
+            GlobalFixRule(
+                rule_type="define_abbreviation",
+                description=fix.instruction,
+                affected_section_ids=[fix.section_id],
+            )
+            for fix in abbreviation_fixes
+        )
 
         actionable_rules = [r for r in global_rules if r.rule_type != "note_only"]
         note_only_rules = [r for r in global_rules if r.rule_type == "note_only"]
@@ -486,4 +513,3 @@ def _extract_json_array(raw: str) -> list | None:
                     break
 
     return None
-
