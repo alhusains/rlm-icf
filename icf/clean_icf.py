@@ -815,7 +815,7 @@ def _add_validation_placeholder(
 
     # Co-Investigators: surface the UHN disclaimer (instructions) before suggested text
     # so the study team sees that listing co-investigators is generally discouraged.
-    if var is not None and var.section_id == "2.4" and (var.instructions or "").strip():
+    if var is not None and var.section_id in ("2.4", "7") and (var.instructions or "").strip():
         p_inst = doc.add_paragraph()
         p_inst.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p_inst.paragraph_format.space_before = Pt(2)
