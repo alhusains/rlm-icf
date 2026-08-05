@@ -217,6 +217,11 @@ class GlobalFixRule:
                               an LLM guess about WHERE to place a definition can contradict
                               the scan's own placement and leave the abbreviation undefined
                               everywhere.
+      gloss_term           -- first document use of stubborn terms (placebo/washout): keep
+                              a short parenthetical gloss; later uses: bare term only.
+                              LLM rules come from find_term_gloss_fixes; a deterministic
+                              post-pass (apply_term_gloss_consistency) also strips any
+                              redundant glosses re-introduced by other Pass B patches.
       standardize_term     -- replace an inconsistent term across sections; from Stage 8
                               cross-section notes (Pass A)
       fix_inconsistency    -- correct a factual/structural inconsistency; from Pass A

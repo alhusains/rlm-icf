@@ -26,8 +26,9 @@ import copy
 import json
 import re
 
+from icf.clean_icf import MARKER_PLEASE_COMPLETE
 from icf.harmonize_prompts import build_harmonization_prompt
-from icf.remediate_prompts import extract_locked_phrases
+from icf.remediate_prompts import collect_section_locked_phrases
 from icf.types import ExtractionResult, TemplateVariable
 from rlm.clients import get_client
 
@@ -202,18 +203,29 @@ class SectionGroupHarmonizer:
                         )
                     continue
 
-                # Safety: locked phrases from required_text AND suggested_text must survive.
+                # Safety: locked phrases (template + runtime injections) must survive.
                 current_text = target.filled_template or target.answer or ""
-                locked = extract_locked_phrases(var.required_text, current_text)
-                for p in extract_locked_phrases(var.suggested_text, current_text):
-                    if p not in locked:
-                        locked.append(p)
+                locked = collect_section_locked_phrases(var, current_text)
                 if locked and not _all_phrases_present(revised_text, locked):
                     missing = [p for p in locked if p not in revised_text]
                     preview = "; ".join(f'"{p[:55]}"' for p in missing[:2])
                     print(
                         f"[HARMONIZE] Section {section_id}: revision rejected — "
                         f"required text would be altered. Missing: {preview}"
+                    )
+                    continue
+
+                # Safety: a [PLEASE COMPLETE] marker must never be reworded away.
+                # Rejecting (keeping the original) is the safe failure mode even if
+                # the LLM intended to legitimately move the gap to another
+                # sub-section elsewhere in this same batch -- worst case the marker
+                # is left in both places instead of silently disappearing.
+                if revised_text.count(MARKER_PLEASE_COMPLETE) < current_text.count(
+                    MARKER_PLEASE_COMPLETE
+                ):
+                    print(
+                        f"[HARMONIZE] Section {section_id}: revision rejected — "
+                        f"a {MARKER_PLEASE_COMPLETE} marker would be reworded or dropped."
                     )
                     continue
 
