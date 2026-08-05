@@ -214,7 +214,13 @@ def build_extraction_prompt(var: TemplateVariable, protocol_length: int = 0) -> 
         "the same quote — one quote per distinct fact — and together the quotes must cover "
         "all the study-specific information you wrote.\n"
         '4. If only partial info is found, set status="PARTIAL" and note what is missing.\n'
-        "5. For unfillable template placeholders, write [PLEASE COMPLETE] — never explain why.\n"
+        "5. For unfillable template placeholders, write [PLEASE COMPLETE] — never explain why. "
+        "This is the ONLY accepted placeholder string, and it applies just as much to a single "
+        "{{placeholder}} buried inside an otherwise-complete sentence as to a whole missing "
+        "section — never invent a descriptive substitute that echoes the missing field's name "
+        "(e.g. '[complete time]' or '[TO BE FILLED MANUALLY]' for an unfillable {{length of "
+        "time}}). Example: if {{length of time}} is not stated, write 'The procedure will take "
+        "about [PLEASE COMPLETE].' — never a paraphrased placeholder.\n"
         + (
             "6. This section is OPTIONAL. After a brief search, if the protocol contains no direct "
             "evidence that this topic applies to this study, return status=\"NOT_FOUND\" immediately. "

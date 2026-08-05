@@ -100,6 +100,19 @@ Vocabulary and Word Choice
 - Explain abstract medical concepts using concrete examples, stories, or analogies.
 - If a medical term is strictly required, explain what it means in plain language
   immediately after (e.g. "hypertension (high blood pressure)").
+- Stubborn terms (AI-drafted text only — never rewrite fixed required/suggested template
+  wording; also leave a term alone if it is part of the official study title/short title
+  or a named primary objective that cannot be reworded):
+    • placebo / washout: when you use the term, keep it and gloss it once with a short
+      parenthetical (e.g. "a placebo (a look-alike with no active medicine)", "a washout
+      period (a time when you stop taking a medicine so it can leave your body)"). Prefer
+      glossing only if this seems like the first mention in the ICF; if unsure, a brief
+      gloss is fine — a later document-wide pass keeps only the earliest gloss and strips
+      redundant ones. Within the same section, after the first glossed mention, use the
+      bare term alone.
+    • success / successful: do not use these words in consent text — they are coercive and
+      imply benefit. If the protocol describes a "success" measure or outcome, use a
+      neutral term such as "effectiveness" (or describe what is being measured) instead.
 - Be consistent with terminology — use the exact same term throughout the text.
   For example, choose either "medicine" or "medication" and stick to it — not both.
 
