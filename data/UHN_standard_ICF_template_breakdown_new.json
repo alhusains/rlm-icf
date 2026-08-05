@@ -46,7 +46,7 @@
     {
       "section_id": "1.2",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Study purpose",
+      "sub_section": "STUDY PURPOSE",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -62,7 +62,7 @@
     {
       "section_id": "1.3",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Duration",
+      "sub_section": "DURATION",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -78,7 +78,7 @@
     {
       "section_id": "1.4",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Study Design and Procedures",
+      "sub_section": "STUDY DESIGN AND PROCEDURES",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -94,7 +94,7 @@
     {
       "section_id": "1.5",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Risks",
+      "sub_section": "RISKS",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -110,7 +110,7 @@
     {
       "section_id": "1.6",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Benefits",
+      "sub_section": "BENEFITS",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -126,7 +126,7 @@
     {
       "section_id": "1.7",
       "heading": "Summary of Informed Consent Form",
-      "sub_section": "Alternatives",
+      "sub_section": "ALTERNATIVES",
       "required": true,
       "complexity": [
         "Moderate mapping complexity"
@@ -314,9 +314,9 @@
       "is_in_protocol": false,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Explain the alternative options applicable to the study population, and their important potential benefits and risks.\n\nList applicable treatments available to participants. Should any of the study drug(s)/intervention(s) be available outside of participation in the study, they should be listed here.\n\nDo not include: “This study has been approved by the research ethics committee….” since this may appear to offer a guarantee of safety.",
+      "instructions": "",
       "required_text": "",
-      "suggested_text": "You do not have to take part in this study in order to receive treatment or care.  Other options (in addition to the standard or usual treatment described above) may include, but are not limited to:<Modify previous line as applicable if there is no other alternative treatment available)>\n\n<List applicable treatments available to participants (examples below may be used as applicable). Should any of the study drug(s)/intervention(s) be available outside of participation in the study, they should be listed here. >\n• no therapy at this time\n• palliative care or Best Supportive Care (BSC). This type of care helps reduce pain, tiredness, appetite problems and other problems. It does not treat your condition directly, but instead tries to improve how you feel. Best Supportive Care tries to keep you as active and comfortable as possible.\n• other research studies may be available if you do not take part in this study\n\nPlease talk to your usual doctor or the study doctor about the known benefits and risks of these other options before you decide to take part in this study. Your usual doctor or the study doctor can also discuss with you what will happen if you decide not to undertake any treatment at this time.\n\n<<Suggestion for studies using healthy volunteers>>\nYou do not have to take part in this study.",
+      "suggested_text": "<For therapeutic intervention studies (modify as applicable if there is no other alternative treatment available)>:\n\nYou do not have to take part in this study in order to receive treatment or care. Other options (in addition to the standard or usual treatment described above) may include, but are not limited to:\n\n<List applicable treatments available to participants (examples below may be used as applicable). Should any of the study drug(s)/intervention(s) be available outside of participation in the study, they should be listed here. >\n• no therapy at this time\n• palliative care or Best Supportive Care (BSC). This type of care helps reduce pain, tiredness, appetite problems and other problems. It does not treat your condition directly, but instead tries to improve how you feel. Best Supportive Care tries to keep you as active and comfortable as possible.\n• other research studies may be available if you do not take part in this study\n\nPlease talk to your usual doctor or the study doctor about the known benefits and risks of these other options before you decide to take part in this study. Your usual doctor or the study doctor can also discuss with you what will happen if you decide not to undertake any treatment at this time.\n\n<<Suggestion for studies using healthy volunteers>>\nYou do not have to take part in this study.",
       "suggested_text_format": "text"
     },
     {
@@ -366,7 +366,7 @@
       "is_standard_text": false,
       "instructions": "Explain whether participants or others will know which group the participant will be in.",
       "required_text": "",
-      "suggested_text": "<For open label, randomized studies>\nYou will be told which group you are in.\n\n<For single-blind studies>\nYou will not know which group you are in, but the study doctor and study staff will.\n\nWhen you finish you participation in the study and would like to know what study group you were in, let the study team know. Please note that you may not be able to get this information until the entire study is completed.\n\n<For double-blind studies>\nThis is a double-blind study, which means that neither you, the study doctors, the study staff, nor your usual health care providers will know which group you are in. Your group assignment can be identified if medically necessary.\n\nWhen you finish you participation in the study and would like to know what study group you were in, let the study team know. Please note that you may not be able to get this information until the entire study is completed.\n\n<Example for trials with intervention assigned based on protocol-specific criteria>\nIf you decide to participate then you will be assigned into one of the groups described below.  The group you are assigned to will be determined by {{specify assignment criteria e.g. the treatment you have previously received}}.  You will be told which group you are in.\n\n<If applicable, include the following>\n\nOnce a certain number of participants have entered the intervention phase of the study from all of the research sites combined, no more participants will be enrolled into the study at any site.",
+      "suggested_text": "<For open label, randomized studies>\nYou will be told which group you are in.\n\n<For single-blind studies>\nYou will not know which group you are in, but the study doctor and study staff will.\n\nWhen you finish your participation in the study and would like to know what study group you were in, let the study team know. Please note that you may not be able to get this information until the entire study is completed.\n\n<For double-blind studies>\nThis is a double-blind study, which means that neither you, the study doctors, the study staff, nor your usual health care providers will know which group you are in. Your group assignment can be identified if medically necessary.\n\nWhen you finish your participation in the study and would like to know what study group you were in, let the study team know. Please note that you may not be able to get this information until the entire study is completed.\n\n<Example for trials with intervention assigned based on protocol-specific criteria>\nIf you decide to participate then you will be assigned into one of the groups described below.  The group you are assigned to will be determined by {{specify assignment criteria e.g. the treatment you have previously received}}.  You will be told which group you are in.\n\n<If applicable, include the following>\n\nOnce a certain number of participants have entered the intervention phase of the study from all of the research sites combined, no more participants will be enrolled into the study at any site.",
       "suggested_text_format": "text"
     },
     {
@@ -1027,7 +1027,7 @@
       "partially_in_protocol": false,
       "is_standard_text": true,
       "instructions": "The required_text contains standard UHN wording. The source uses a literal form-field layout (underscores with 'Name' and 'Telephone' labels) where the Principal Investigator's name and phone number are written/typed on the rendered consent form — NOT an inline LLM-substitution placeholder. Preserve this form-field layout as-is in the rendered output.\n\nThe REB contact details (Chair of the University Health Network Research Ethics Board, Research Ethics office number 416-581-7849) are standard and must not be modified.\n\nDetermine from the protocol/study setup whether a copy of the consent form will be included in the participant's health record. If yes, include the optional sentence 'A copy of the consent form that you sign to enter the study may be included in your health record/hospital chart.' from suggested_text as a follow-on to the 'You will be given a copy of this signed and dated consent form...' sentence.",
-      "required_text": "If you have questions about taking part in this study, or if you suffer a research-related injury, you can talk to your study doctor, or the doctor who is in charge of the study at this institution. That person is:\n\n____________________________\t_________________________\nName\tTelephone\n\nIf you have questions about your rights as a participant or about ethical issues related to this study, call the Chair of the University Health Network Research Ethics Board (UHN REB) or the Research Ethics office number at 416-581-7849.  The REB is a group of people who oversee the ethical conduct of research studies. The UHN REB is not involved in the study at all. Everything that you discuss will be kept confidential.\n\nYou will be given a copy of this signed and dated consent form prior to participating in this study.",
+      "required_text": "If you have questions about taking part in this study, or if you suffer a research-related injury, you can talk to your study doctor, or the doctor who is in charge of the study at this institution. That person is:\n\n____________________________     _________________________\nName                                                       Telephone\n\nIf you have questions about your rights as a participant or about ethical issues related to this study, call the Chair of the University Health Network Research Ethics Board (UHN REB) or the Research Ethics office number at 416-581-7849.  The REB is a group of people who oversee the ethical conduct of research studies. The UHN REB is not involved in the study at all. Everything that you discuss will be kept confidential.\n\nYou will be given a copy of this signed and dated consent form prior to participating in this study.",
       "suggested_text": "<Optional follow-on to 'You will be given a copy of this signed and dated consent form...' — include if a copy will be filed in the participant's health record:>\nA copy of the consent form that you sign to enter the study may be included in your health record/hospital chart.",
       "suggested_text_format": "text"
     }

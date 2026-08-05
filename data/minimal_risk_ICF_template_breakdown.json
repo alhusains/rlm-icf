@@ -13,7 +13,7 @@
     "field_guide": {
       "section_id": "Unique ICF section identifier (e.g., '2.1', '18.2').",
       "heading": "UPPERCASE section heading as it appears in the ICF template.",
-      "sub_section": "Sub-section name, or null if none.",
+      "sub_section": "Sub-section name, or null if none. Use angle brackets (e.g. '<Focus Groups>') when the label is a conditional template block rather than a true heading in the source ICF template — the draft renderer shows these as bold grey italic.",
       "required": "true = must be included; false = include only if relevant to this study.",
       "complexity": "Classification tags indicating extraction difficulty and protocol availability. Drives the RLM iteration budget and availability flags.",
       "is_in_protocol": "true if the information is expected to be findable in the study protocol.",
@@ -266,7 +266,7 @@
       "is_in_protocol": true,
       "partially_in_protocol": false,
       "is_standard_text": false,
-      "instructions": "Please include 2-3 sentences about the background of the study, including any experience(s) to date, what led to the development of the study (e.g., data from other studies), current standard of care (if applicable), etc.\n\nExplain the purpose of the study in lay terminology, for example: the purpose of this study is to look at an approved intervention to obtain additional information about {{specify purpose}}.\n\nWriting style — apply to all text generated for this section:\n• Plain language: use common everyday words and short sentences. Spell out any abbreviation or acronym on first use.\n• Research framing: use correct research terminology (e.g. \"investigational study drug,\" not \"treatment\" or \"therapy\"). Do not imply guaranteed outcomes — state explicitly that benefits are uncertain.\n• Participant-centred tone: say \"you will be asked to\" rather than \"you will be expected to\". Maintain a neutral, non-coercive, non-persuasive tone throughout.",
+      "instructions": "OUTPUT STRUCTURE: Your filled_template must contain TWO parts in this exact order:\n  1. BACKGROUND (first): 2–3 sentences describing the background and rationale for the study (free-form from the protocol — there is no fixed required/suggested wording for this part).\n  2. PURPOSE (second): the required_text sentence beginning exactly with \"The purpose of this study is to\", with {{explain the purpose of the study}} filled in plain lay language.\n\nBACKGROUND: Begin with 2–3 sentences describing the background and rationale for the study. Include relevant experience or evidence to date, what led to the development of the study (e.g., findings from previous research, unmet needs, gaps in knowledge, or clinical experience), and the current standard of care or existing approaches, if applicable.\n\nPURPOSE: After providing the background context, explain the purpose of the study from the perspective of what a research participant should understand about why the study is being conducted. Focus on why the study is being done and what the researchers hope to learn. Begin the purpose statement with the exact required_text: \"The purpose of this study is to...\".\n\nUse clear, everyday language that can be easily understood by someone without a medical or research background. Do not describe detailed study procedures or activities.\n\nWriting style — apply to all text generated for this section:\n• Plain language: use common everyday words and short sentences. Spell out any abbreviation or acronym on first use.\n• Research framing: use correct research terminology (e.g. \"investigational study drug,\" not \"treatment\" or \"therapy\"). Do not imply guaranteed outcomes — state explicitly that benefits are uncertain.\n• Participant-centred tone: say \"you will be asked to\" rather than \"you will be expected to\". Maintain a neutral, non-coercive, non-persuasive tone throughout.",
       "required_text": "The purpose of this study is to {{explain the purpose of the study}}",
       "suggested_text": "",
       "suggested_text_format": "text"
@@ -308,7 +308,7 @@
     {
       "section_id": "9.1",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Research Procedures",
+      "sub_section": "<Research Procedures>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"
@@ -324,7 +324,7 @@
     {
       "section_id": "9.2",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Repositories or database studies",
+      "sub_section": "<Repositories or database studies>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"
@@ -340,7 +340,7 @@
     {
       "section_id": "9.3",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Focus Groups",
+      "sub_section": "<Focus Groups>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"
@@ -356,7 +356,7 @@
     {
       "section_id": "9.4",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Interviews",
+      "sub_section": "<Interviews>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"
@@ -372,7 +372,7 @@
     {
       "section_id": "9.5",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Recordings",
+      "sub_section": "<Recordings>",
       "required": false,
       "complexity": [
         "Easy mapping complexity"
@@ -388,7 +388,7 @@
     {
       "section_id": "9.6",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Questionnaires",
+      "sub_section": "<Questionnaires>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"
@@ -404,7 +404,7 @@
     {
       "section_id": "9.7",
       "heading": "WHAT WILL HAPPEN DURING THIS STUDY?",
-      "sub_section": "Participant Diaries",
+      "sub_section": "<Participant Diaries>",
       "required": false,
       "complexity": [
         "Moderate mapping complexity"

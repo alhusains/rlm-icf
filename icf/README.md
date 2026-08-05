@@ -123,6 +123,12 @@ UHN-branded draft ICF for study-team review (publication layout) with:
 - Extracted text for each section
 - A grey italic status/confidence annotation below each heading
 - Placeholders (`[PLEASE COMPLETE]`, highlighted yellow) for unavailable information
+- Body text colour-coded by provenance: black = required template wording (verbatim),
+  blue (`#0563C1`) = suggested template wording kept as-is, yellow highlight = content
+  the AI wrote or filled in itself (see `icf/clean_icf.py::_template_phrase_sources`)
+- Section/sub-section headings use the same black/blue split based on the registry's
+  `required` flag: black = required section (must appear in every ICF), blue = optional
+  section (include only if relevant to this study)
 
 ### 2. `marked_up_icf.docx`
 Annotated ICF for traceability with:

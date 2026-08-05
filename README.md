@@ -154,7 +154,7 @@ Files are named `{artifact}_{backend}_{protocol_stem}.{ext}` (production backend
 
 | Artifact | Description |
 |----------|-------------|
-| `draft_icf_*.docx` | Working copy for the study team (UHN layout, yellow `[PLEASE COMPLETE]`, grey annotations). |
+| `draft_icf_*.docx` | Working copy for the study team (UHN layout, grey annotations, text and section headings colour-coded black/blue/yellow by required/suggested/AI-generated provenance). |
 | `marked_up_icf_*.docx` | Traceability: evidence, status, validation, review appendix. |
 | `extraction_report_*.json` | Full audit trail (extractions, validations, review, remediation). |
 

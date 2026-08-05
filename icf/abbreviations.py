@@ -21,6 +21,12 @@ and feed the results into Stage 9 remediation as ordinary GlobalFixRules --
 reusing the same per-section patch + locked-phrase safety net as every other
 remediation rule.
 
+The same pattern applies to stubborn-term GLOSSES (placebo / washout): each
+section may parenthetically explain the term on first use within that section,
+so the assembled document ends up defining it repeatedly. ``find_term_gloss_fixes``
+keeps only the earliest gloss in reading order and strips later ones (see
+UHN_PLAIN_LANGUAGE_GUIDELINES stubborn-terms bullet).
+
 A related but distinct failure mode is an ORPHANED abbreviation: review's
 suggested_fix or remediation's own patch simplifies away the term an
 abbreviation stood for but leaves the abbreviation itself behind, e.g.
@@ -314,3 +320,254 @@ def find_abbreviation_fixes(
             )
 
     return fixes
+
+
+# ---------------------------------------------------------------------------
+# Stubborn-term glosses (placebo / washout) — same document-wide first-use rule
+# ---------------------------------------------------------------------------
+
+# Parenthetical glosses only (the form the plain-language guidelines ask for).
+# Minimum gloss length avoids false hits like "placebo (arm A)".
+_TERM_GLOSS_SPECS: tuple[dict[str, object], ...] = (
+    {
+        "key": "placebo",
+        "label": "placebo",
+        "gloss_re": re.compile(r"\bplacebos?\b\s*\([^)]{8,160}\)", re.IGNORECASE),
+        "bare_re": re.compile(r"\bplacebos?\b", re.IGNORECASE),
+        "example_gloss": "placebo (a look-alike with no active medicine)",
+    },
+    {
+        "key": "washout",
+        "label": "washout",
+        "gloss_re": re.compile(
+            r"\bwashout(?:\s+periods?)?\b\s*\([^)]{8,160}\)",
+            re.IGNORECASE,
+        ),
+        "bare_re": re.compile(r"\bwashout(?:\s+periods?)?\b", re.IGNORECASE),
+        "example_gloss": (
+            "washout period (a time when you stop taking a medicine so it can "
+            "leave your body)"
+        ),
+    },
+)
+
+
+def _gloss_is_in_locked_text(gloss: str, locked_phrases: list[str]) -> bool:
+    """True when this gloss is part of required/suggested/runtime locked wording."""
+    if not gloss or not locked_phrases:
+        return False
+    normalized = " ".join(gloss.split())
+    for phrase in locked_phrases:
+        if normalized in " ".join(phrase.split()):
+            return True
+    return False
+
+
+def _locked_phrases_by_section(
+    extractions: list[ExtractionResult],
+    variables: list[TemplateVariable],
+) -> dict[str, list[str]]:
+    """Lazy import avoids any risk of import cycles with remediate_prompts."""
+    from icf.remediate_prompts import collect_section_locked_phrases
+
+    ext_map = {e.section_id: e for e in extractions}
+    out: dict[str, list[str]] = {}
+    for var in variables:
+        ext = ext_map.get(var.section_id)
+        filled = (ext.filled_template or ext.answer or "") if ext else ""
+        phrases = collect_section_locked_phrases(var, filled)
+        if phrases:
+            out[var.section_id] = phrases
+    return out
+
+
+def find_term_gloss_fixes(
+    extractions: list[ExtractionResult],
+    variables: list[TemplateVariable],
+) -> list[AbbreviationFix]:
+    """Detect redundant document-wide glosses of stubborn terms (placebo/washout).
+
+    Same reading-order rule as abbreviations: only the earliest parenthetical
+    gloss is kept. Later sections that re-gloss the term are told to use the
+    bare term. Glosses that sit inside locked required/suggested/runtime text
+    still count as the document's first explanation, but no fix is emitted
+    against those locked sections (the patch step could not remove them safely).
+
+    If the earliest *unlocked* bare use precedes the first gloss, that section
+    is told to add the gloss and the later unlocked gloss section to drop it.
+    """
+    doc = _document_text_by_section(extractions, variables)
+    if not doc:
+        return []
+
+    locked_by_section = _locked_phrases_by_section(extractions, variables)
+    section_order = [sid for sid, _ in doc]
+    fixes: list[AbbreviationFix] = []
+    emitted: set[tuple[str, str]] = set()
+
+    for spec in _TERM_GLOSS_SPECS:
+        key = str(spec["key"])
+        label = str(spec["label"])
+        gloss_re: re.Pattern[str] = spec["gloss_re"]  # type: ignore[assignment]
+        bare_re: re.Pattern[str] = spec["bare_re"]  # type: ignore[assignment]
+        example_gloss = str(spec["example_gloss"])
+
+        # (section_id, gloss_text, locked)
+        gloss_hits: list[tuple[str, str, bool]] = []
+        gloss_spans_by_section: dict[str, list[tuple[int, int]]] = {}
+        for section_id, text in doc:
+            for m in gloss_re.finditer(text):
+                gloss = m.group(0)
+                locked = _gloss_is_in_locked_text(
+                    gloss, locked_by_section.get(section_id, [])
+                )
+                gloss_hits.append((section_id, gloss, locked))
+                gloss_spans_by_section.setdefault(section_id, []).append(m.span())
+
+        if not gloss_hits:
+            continue
+
+        first_gloss_section, first_gloss_text, first_gloss_locked = gloss_hits[0]
+
+        # Earliest bare use that is NOT itself part of a gloss match.
+        first_bare: str | None = None
+        for section_id, text in doc:
+            spans = gloss_spans_by_section.get(section_id, [])
+            for m in bare_re.finditer(text):
+                if any(start <= m.start() < end for start, end in spans):
+                    continue
+                first_bare = section_id
+                break
+            if first_bare is not None:
+                break
+
+        bare_precedes = (
+            first_bare is not None
+            and first_bare != first_gloss_section
+            and section_order.index(first_bare) < section_order.index(first_gloss_section)
+        )
+        # Section that should own the document's one explanation (for messaging).
+        owner_section = first_bare if bare_precedes else first_gloss_section
+
+        # Later unlocked glosses are redundant (locked ones are left alone).
+        for section_id, gloss, locked in gloss_hits[1:]:
+            if locked:
+                continue
+            ek = (section_id, key)
+            if ek in emitted:
+                continue
+            emitted.add(ek)
+            fixes.append(
+                AbbreviationFix(
+                    section_id=section_id,
+                    instruction=(
+                        f"'{label}' is already explained earlier in the document "
+                        f"(first explanation in section {owner_section}). Do not "
+                        f"re-explain it here -- remove the parenthetical gloss and "
+                        f"use '{label}' alone (e.g. replace '{gloss}' with the bare "
+                        f"term '{label}')."
+                    ),
+                )
+            )
+
+        if not bare_precedes:
+            continue
+
+        bare_key = (first_bare, key)
+        if bare_key not in emitted:
+            emitted.add(bare_key)
+            fixes.append(
+                AbbreviationFix(
+                    section_id=first_bare,
+                    instruction=(
+                        f"'{label}' is used here before it is explained anywhere "
+                        f"in the document -- this is its earliest use. On the first "
+                        f"mention here, gloss it in plain language once (e.g. "
+                        f"'{example_gloss}'), then use '{label}' alone for any later "
+                        f"mention in this section."
+                    ),
+                )
+            )
+
+        # Only ask the original gloss section to drop it when that gloss is editable.
+        if not first_gloss_locked:
+            gloss_key = (first_gloss_section, key)
+            if gloss_key not in emitted:
+                emitted.add(gloss_key)
+                fixes.append(
+                    AbbreviationFix(
+                        section_id=first_gloss_section,
+                        instruction=(
+                            f"The gloss '{first_gloss_text}' here is not actually the "
+                            f"first use of '{label}' in the document -- it appears earlier "
+                            f"in section {first_bare}. Once that section explains it, use "
+                            f"'{label}' alone here instead of spelling out the gloss again."
+                        ),
+                    )
+                )
+
+    return fixes
+
+
+def apply_term_gloss_consistency(
+    extractions: list[ExtractionResult],
+    variables: list[TemplateVariable],
+) -> list[tuple[str, str, str]]:
+    """Deterministically keep only the earliest parenthetical gloss per stubborn term.
+
+    LLM Pass B is one-shot and other rules (terminology / route wording) often
+    re-introduce a fresh placebo/washout gloss while rewriting a section that was
+    never told to strip one. This mechanical pass runs AFTER those patches: the
+    earliest unlocked parenthetical gloss in reading order is kept; every later
+    unlocked gloss is stripped to the bare term. Locked required/suggested glosses
+    still count as the document's first explanation but are never edited.
+
+    Mutates ``filled_template`` on the given extractions in place. Returns
+    ``(section_id, before, after)`` for each section that changed.
+    """
+    doc = _document_text_by_section(extractions, variables)
+    if not doc:
+        return []
+
+    locked_by_section = _locked_phrases_by_section(extractions, variables)
+    ext_map = {e.section_id: e for e in extractions}
+    # section_id -> list of (start, end) spans to strip from that section's text
+    strip_spans: dict[str, list[tuple[int, int]]] = {}
+
+    for spec in _TERM_GLOSS_SPECS:
+        gloss_re: re.Pattern[str] = spec["gloss_re"]  # type: ignore[assignment]
+        seen_first = False
+        for section_id, text in doc:
+            for m in gloss_re.finditer(text):
+                gloss = m.group(0)
+                locked = _gloss_is_in_locked_text(
+                    gloss, locked_by_section.get(section_id, [])
+                )
+                if not seen_first:
+                    seen_first = True
+                    continue
+                if locked:
+                    continue
+                strip_spans.setdefault(section_id, []).append(m.span())
+
+    changes: list[tuple[str, str, str]] = []
+    for section_id, spans in strip_spans.items():
+        ext = ext_map.get(section_id)
+        if ext is None:
+            continue
+        before = ext.filled_template or ext.answer or ""
+        if not before or not spans:
+            continue
+        # Strip from the end so earlier offsets stay valid.
+        after = before
+        for start, end in sorted(spans, reverse=True):
+            matched = after[start:end]
+            paren = matched.find("(")
+            bare = matched[:paren].rstrip() if paren >= 0 else matched
+            after = after[:start] + bare + after[end:]
+        if after == before:
+            continue
+        ext.filled_template = after
+        changes.append((section_id, before, after))
+
+    return changes

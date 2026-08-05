@@ -193,9 +193,11 @@ def _write_draft_section(
             heading_text += f" - {var.sub_section}"
         doc.add_heading(heading_text, level=level)
     elif var.section_id != "1.1" and var.sub_section:
+        # US-summary subsections (STUDY PURPOSE … ALTERNATIVES): uppercase,
+        # underlined, not bold. Study Title stays bold via page opening.
         p = doc.add_paragraph()
-        r = p.add_run(var.sub_section)
-        _style_run(r, size=11, bold=True)
+        r = p.add_run(var.sub_section.upper())
+        _style_run(r, size=11, bold=False, underline=True)
 
     if ext is None:
         _add_status_line(doc, "NOT PROCESSED", _GREY)
@@ -417,10 +419,12 @@ def _style_run(
     bold: bool = False,
     italic: bool = False,
     colour: RGBColor | None = None,
+    underline: bool = False,
 ) -> None:
     if size is not None:
         run.font.size = Pt(size)
     run.font.bold = bold
     run.font.italic = italic
+    run.font.underline = underline
     if colour is not None:
         run.font.color.rgb = colour

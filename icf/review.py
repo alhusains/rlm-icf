@@ -15,8 +15,8 @@ contact) are completely protected:
   3. Any flags referencing protected section IDs are silently dropped in
      _parse_review_response() as a final backstop.
   4. Flags whose flagged_text overlaps locked literal phrases from
-     required_text or suggested_text are also dropped (same
-     extract_locked_phrases logic as remediation).
+     required_text, suggested_text, or runtime injections (e.g. SDM intro)
+     are also dropped (same collect_section_locked_phrases logic as remediation).
 
 Design mirrors adapt.py: get_client() once, single direct LLM call (no REPL),
 graceful failure returns an empty ReviewResult rather than raising.
@@ -27,7 +27,8 @@ from __future__ import annotations
 import json
 import re
 
-from icf.remediate_prompts import extract_locked_phrases
+from icf.clean_icf import MARKER_PLEASE_COMPLETE
+from icf.remediate_prompts import collect_section_locked_phrases
 from icf.review_prompts import build_icf_document_for_review, build_review_messages
 from icf.types import (
     ExtractionResult,
@@ -120,16 +121,9 @@ def _build_locked_phrases_by_section(
     ext_map = {e.section_id: e for e in extractions}
     locked: dict[str, list[str]] = {}
     for var in variables:
-        if (not var.required_text or not var.required_text.strip()) and (
-            not var.suggested_text or not var.suggested_text.strip()
-        ):
-            continue
         ext = ext_map.get(var.section_id)
         filled = (ext.filled_template or ext.answer or "") if ext else ""
-        phrases = extract_locked_phrases(var.required_text, filled)
-        for p in extract_locked_phrases(var.suggested_text, filled):
-            if p not in phrases:
-                phrases.append(p)
+        phrases = collect_section_locked_phrases(var, filled)
         if phrases:
             locked[var.section_id] = phrases
     return locked
@@ -223,6 +217,11 @@ def _parse_review_response(
         if section_id in protected_section_ids:
             continue
         flagged_text = str(f.get("flagged_text", ""))
+        # A [PLEASE COMPLETE] marker is a literal placeholder, never a plain-language
+        # issue -- drop any flag touching it so remediation can never be asked to
+        # reword or drop it downstream.
+        if MARKER_PLEASE_COMPLETE in flagged_text:
+            continue
         section_locked = locked_by_section.get(section_id, [])
         if _flag_targets_locked_text(flagged_text, section_locked):
             continue

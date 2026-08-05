@@ -11,10 +11,17 @@ submission:
   - Standard UHN signature pages appended verbatim (only the TITLE line changes)
 
 Each section carries a small grey italic status/confidence annotation below its
-heading, ``[PLEASE COMPLETE]`` markers are highlighted yellow, and sections
-that could not be extracted show suggested text in grey italic. No confidence
-colour-coding, evidence quotes, or review flags appear here — those live in the
-separate marked-up ICF (see assemble.py).
+heading. Body text is colour-coded by provenance so the study team can see at a
+glance what they must not touch versus what needs review:
+
+  - Required template wording (verbatim, must not be changed): default black.
+  - Suggested template wording that was kept as-is: blue (#0563C1), matching the
+    template's own suggested-text colour.
+  - Everything else — content the AI wrote, drafted, or filled in itself,
+    including ``[PLEASE COMPLETE]`` markers — is highlighted yellow.
+
+No confidence colour-coding, evidence quotes, or review flags appear here —
+those live in the separate marked-up ICF (see assemble.py).
 """
 
 from __future__ import annotations
@@ -24,12 +31,18 @@ import os
 import re
 
 from docx import Document
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
-from icf.runtime_injections import SIGNATURE_CONSENT_SECTION_ID, resolve_signature_consent_bullets
+from icf.remediate_prompts import extract_locked_phrases
+from icf.runtime_injections import (
+    SIGNATURE_CONSENT_SECTION_ID,
+    resolve_signature_consent_bullets,
+    runtime_locked_phrases,
+)
 from icf.types import ExtractionResult, TemplateVariable
 
 # ---------------------------------------------------------------------------
@@ -70,9 +83,11 @@ _BULLET_LINE_RE = re.compile(
     r"(?P<content>.*)$"
 )
 _BULLET_GLYPHS = ("\u2022", "\u25E6", "\u25AA")  # • ◦ ▪
-_BULLET_BASE_INDENT_CM = 1.0
-_BULLET_HANGING_CM = 0.5
-_BULLET_NEST_STEP_CM = 0.75
+# Inline "• text" bullets (glyph is part of the paragraph). Do NOT use a hanging
+# first-line indent — that pushes wrapped lines further right than the first
+# line's text, which is the misalignment users see on long bullets.
+_BULLET_BASE_INDENT_CM = 0.63
+_BULLET_NEST_STEP_CM = 0.63
 _INLINE_MARKER_RE = re.compile(
     rf"({re.escape(MARKER_PLEASE_COMPLETE)}|{re.escape(MARKER_ADD_OTHER_ORGS)})"
 )
@@ -83,6 +98,23 @@ _TESTS_PROCEDURES_NOT_FOUND_SUGGESTED = (
     "study-related activities. Please refer to template for the exact layout "
     "of the table."
 )
+
+# Study-team draft notes shown in grey italic under the status line (standard
+# template procedures sub-sections only — these IDs do not exist in minimal risk).
+_DRAFT_INSTRUCTION_BY_SECTION: dict[str, str] = {
+    "12.1": (
+        "List (in bullet format) any standard procedures (e.g. MRI, blood draws, "
+        "etc.) and tests that are outside of standard of care. Include a lay "
+        "explanation, if not obvious, of what each test involves."
+    ),
+    "12.2": (
+        "If there are experimental procedures or medical tests, include this "
+        "section.  Any standard procedures (e.g., MRI, blood draw, etc.) that "
+        "are outside of standard of care should be included in the "
+        "'non-experimental procedures' section – this section is for procedures "
+        "that are experimental (e.g., being tested as part of the research)."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +206,15 @@ def _set_document_font(doc: Document) -> None:
 # ---------------------------------------------------------------------------
 # Header: UHN logo
 # ---------------------------------------------------------------------------
+
+
+def _apply_bullet_paragraph_format(p, *, level: int = 0) -> None:
+    """Indent a bullet paragraph without hanging wrap (see _BULLET_* constants)."""
+    left_cm = _BULLET_BASE_INDENT_CM + (level * _BULLET_NEST_STEP_CM)
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.left_indent = Cm(left_cm)
+    p.paragraph_format.first_line_indent = Cm(0)
 
 
 def _build_header(doc: Document, logo_path: str | None) -> None:
@@ -352,20 +393,22 @@ def _write_validation_intro_page(doc: Document) -> None:
         "Confirm formatting aligns with submission standards.",
     ]:
         p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Cm(0.8)
-        p.paragraph_format.first_line_indent = Cm(-0.5)
+        _apply_bullet_paragraph_format(p)
         r = p.add_run("\u2022 " + item)
         r.font.name = _FONT
         r.font.size = Pt(_BODY_PT)
 
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(2)
-    p.paragraph_format.space_after = Pt(2)
-    p.paragraph_format.left_indent = Cm(0.8)
-    p.paragraph_format.first_line_indent = Cm(-0.5)
-    _intro_run(p, "\u2022 Remove any instructional text (including this cover page, ", bold=True)
+    _apply_bullet_paragraph_format(p)
+    _intro_run(p, "\u2022 Replace bold placeholders like ", bold=True)
+    _intro_run(p, "[PLEASE COMPLETE]", bold=True, highlight=True)
+    _intro_run(
+        p,
+        " with your own content, review the rest of the yellow-highlighted text "
+        "and clear its highlighting once approved, and remove any instructional "
+        "text (including this cover page and ",
+        bold=True,
+    )
     _intro_run(
         p,
         "grey italic text",
@@ -374,8 +417,6 @@ def _write_validation_intro_page(doc: Document) -> None:
         grey=True,
         size=_INTRO_GREY_ITALIC_PT,
     )
-    _intro_run(p, " and ", bold=True)
-    _intro_run(p, "highlighted text", bold=True, highlight=True)
     _intro_run(p, ") before submitting.", bold=True)
 
     _add_blank(doc)
@@ -472,14 +513,56 @@ def _write_validation_intro_page(doc: Document) -> None:
         rd.font.size = Pt(_BODY_PT)
 
     _add_blank(doc)
-    _intro_section_label(doc, "Flagged sections for Updating")
+    _intro_section_label(doc, "Text Colour Legend")
+
+    _intro_body(
+        doc,
+        "Body text is coloured to show where it came from, so you know what you "
+        "can trust as-is versus what still needs your review:",
+    )
 
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(3)
-    _intro_run(p, "Sections highlighted in yellow", highlight=True)
-    _intro_run(p, " indicate missing information.")
-    _intro_body(doc, "You must address these areas before submitting the document.")
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.left_indent = Cm(0.8)
+    _intro_run(p, "Black text", bold=True)
+    _intro_run(
+        p,
+        " is required wording from the UHN template, copied verbatim. Do not "
+        "reword it.",
+    )
+
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.left_indent = Cm(0.8)
+    _intro_run(p, "Blue text", bold=True, blue=True)
+    _intro_run(
+        p,
+        " is suggested template wording the AI kept as-is. You can edit it if it "
+        "does not fit your study.",
+    )
+
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.left_indent = Cm(0.8)
+    _intro_run(p, "Text highlighted in yellow", highlight=True)
+    _intro_run(
+        p,
+        " was written or filled in by the AI, including missing-information "
+        "placeholders like [PLEASE COMPLETE]. Review all of it carefully for "
+        "accuracy before submitting.",
+    )
+
+    _add_blank(doc)
+    _intro_body(
+        doc,
+        "The same colours mark section headings, based on the UHN template: a "
+        "black heading is a required section that must appear in every ICF, and "
+        "a blue heading is an optional section to include only if relevant to "
+        "this study.",
+    )
 
     _add_blank(doc)
     _intro_section_label(doc, "Important Notes")
@@ -491,10 +574,7 @@ def _write_validation_intro_page(doc: Document) -> None:
         "The submitted protocol was the sole source of information for the generation of this draft",
     ]:
         p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Cm(0.8)
-        p.paragraph_format.first_line_indent = Cm(-0.5)
+        _apply_bullet_paragraph_format(p)
         r = p.add_run("\u2022 " + note)
         r.font.name = _FONT
         r.font.size = Pt(_BODY_PT)
@@ -532,6 +612,7 @@ def _intro_run(
     italic: bool = False,
     highlight: bool = False,
     grey: bool = False,
+    blue: bool = False,
     size: float | None = None,
 ) -> None:
     """Styled run for mixed-format intro paragraphs."""
@@ -544,6 +625,8 @@ def _intro_run(
         r.font.highlight_color = WD_COLOR_INDEX.YELLOW
     if grey:
         r.font.color.rgb = _INTRO_GREY
+    if blue:
+        r.font.color.rgb = _SUGGESTED_TEXT_BLUE
 
 
 def _add_intro_hyperlink(para, url: str) -> None:
@@ -631,7 +714,12 @@ def _write_us_summary_section_blocks(
     variables: list[TemplateVariable],
     ext_map: dict[str, ExtractionResult],
 ) -> None:
-    """Write 1.1 body only (no extra heading), then 1.2–1.7 with sub-section headings."""
+    """Write 1.1 body only (no extra heading), then 1.2–1.7 with underlined headings.
+
+    STUDY PURPOSE through ALTERNATIVES use the same style as main ICF section
+    headings: uppercase, underlined, not bold. Study Title (cover-page style)
+    is written separately in ``_write_us_summary_page_opening`` as bold only.
+    """
     summary_vars = [v for v in variables if v.section_id.startswith("1.")]
     var_11 = next((v for v in summary_vars if v.section_id == "1.1"), None)
     rest_vars = [v for v in summary_vars if v.section_id != "1.1"]
@@ -648,7 +736,9 @@ def _write_us_summary_section_blocks(
             continue
 
         if var.sub_section and var.sub_section != last_sub_section:
-            _add_subsection_heading(doc, var.sub_section, color=None)
+            # Uppercase + underline (not bold) — matches approved US-summary style.
+            sub_required = _any_required(rest_vars, sub_section=var.sub_section)
+            _add_heading(doc, var.sub_section, color=_heading_color(sub_required))
             last_sub_section = var.sub_section
         elif not var.sub_section:
             last_sub_section = None
@@ -662,7 +752,8 @@ def _write_us_summary_section_blocks(
         ):
             _add_validation_annotation(doc, ext)
         if content:
-            _add_content_block(doc, content, color=None, highlight_markers=True)
+            required_phrases, suggested_phrases = _template_phrase_sources(var, content)
+            _add_content_block(doc, content, required_phrases, suggested_phrases)
             if ext is not None and ext.status == "PARTIAL" and ext.notes:
                 _add_partial_notes(doc, ext.notes)
         else:
@@ -689,7 +780,8 @@ def _write_us_summary_1_1_validation(
         _add_validation_annotation(doc, ext)
 
     if content:
-        _add_content_block(doc, content, color=None, highlight_markers=True)
+        required_phrases, suggested_phrases = _template_phrase_sources(var, content)
+        _add_content_block(doc, content, required_phrases, suggested_phrases)
         if ext is not None and ext.status == "PARTIAL" and ext.notes:
             _add_partial_notes(doc, ext.notes)
     else:
@@ -732,23 +824,19 @@ def _write_cover_page(
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
+            required_phrases, suggested_phrases = _template_phrase_sources(var, content)
 
             if label:
                 # Strip any leading repetition of the label from the extracted content
                 # (e.g. "Study Title:" label + "Study Title: XYZ" content → "XYZ").
                 content = _strip_label_prefix(content, label)
-                rl = p.add_run(label)
+                rl = p.add_run(label + " ")
                 rl.bold = True
                 rl.font.name = _FONT
                 rl.font.size = Pt(_BODY_PT)
-                rv = p.add_run(" " + content)
-                rv.bold = False
-                rv.font.name = _FONT
-                rv.font.size = Pt(_BODY_PT)
+                _add_categorized_runs(p, content, required_phrases, suggested_phrases, Pt(_BODY_PT))
             else:
-                r = p.add_run(content)
-                r.font.name = _FONT
-                r.font.size = Pt(_BODY_PT)
+                _add_categorized_runs(p, content, required_phrases, suggested_phrases, Pt(_BODY_PT))
         else:
             if label:
                 p = doc.add_paragraph()
@@ -774,6 +862,168 @@ def _write_cover_page(
 # ---------------------------------------------------------------------------
 
 _ANNOTATION_GREY = RGBColor(0x88, 0x88, 0x88)
+# Matches the template's own suggested-text colour (Word "Hyperlink"-style blue).
+_SUGGESTED_TEXT_BLUE = RGBColor(0x05, 0x63, 0xC1)
+
+
+def _heading_color(required: bool) -> RGBColor | None:
+    """Colour for a section/sub-section heading based on the registry's ``required`` flag.
+
+    None (default black) for REQUIRED sections -- must appear in every ICF, same
+    colour as required body text. Blue for OPTIONAL sections -- include only if
+    relevant to this study -- matching the suggested-text colour, since "include
+    if relevant" is the same kind of judgment call as "keep this suggested wording
+    if it fits".
+    """
+    return None if required else _SUGGESTED_TEXT_BLUE
+
+
+def _any_required(variables: list[TemplateVariable], **filters: str | None) -> bool:
+    """True if any variable matching all *filters* (by attribute name) is required.
+
+    Headings/sub-headings can be shared by several registry rows (e.g. one
+    heading spanning sections 12, 12.1, 12.2, ...); the heading is coloured as
+    required if ANY row under it is required, since the group must then appear.
+    """
+    return any(
+        v.required and all(getattr(v, attr) == value for attr, value in filters.items())
+        for v in variables
+    )
+
+
+# Below this length, a phrase is unreliable as a colour-coding anchor: short
+# closed-choice alternatives extracted by extract_locked_phrases (e.g. "study",
+# "will", "may" from a {{study/clinical trial}} or {{will/may}} placeholder)
+# recur constantly as ordinary words throughout AI-generated prose elsewhere in
+# the same section, and text.find() would match every one of those incidental
+# occurrences, not just the placeholder's actual slot -- painting random words
+# black/blue in the middle of AI-drafted sentences. extract_locked_phrases
+# itself is unaffected (see remediate.py's _locked_phrases_for): it only checks
+# presence, not position, so short phrases remain fully validated there.
+_MIN_COLOR_PHRASE_LEN = 12
+
+
+def _template_phrase_sources(
+    var: TemplateVariable | None, filled_text: str
+) -> tuple[list[str], list[str]]:
+    """Return (required_phrases, suggested_phrases) expected verbatim in filled_text.
+
+    Reuses extract_locked_phrases (icf/remediate_prompts.py) -- the same literal
+    phrase extraction Stage 9 remediation uses to verify required/suggested
+    template wording survives edits. Here it drives colour-coding instead: any
+    part of the final text NOT covered by one of these phrases was written or
+    filled in by the AI, not copied from the template. Phrases too short to be
+    a reliable position anchor are dropped -- see _MIN_COLOR_PHRASE_LEN.
+
+    Runtime-injected verbatim paragraphs (e.g. the SDM opening paragraph in
+    section 3) are not stored in required_text/suggested_text -- they are
+    mandated fixed wording added at runtime -- so they are folded into the
+    required (black) set here, same as collect_section_locked_phrases does
+    for review/remediation's locked-phrase protection.
+    """
+    if var is None:
+        return [], []
+    required = extract_locked_phrases(var.required_text, filled_text)
+    for p in runtime_locked_phrases(var, filled_text):
+        if p not in required:
+            required.append(p)
+    suggested = extract_locked_phrases(var.suggested_text, filled_text)
+    required_phrases = [p for p in required if len(p) >= _MIN_COLOR_PHRASE_LEN]
+    suggested_phrases = [p for p in suggested if len(p) >= _MIN_COLOR_PHRASE_LEN]
+    return required_phrases, suggested_phrases
+
+
+def _normalize_whitespace_with_offsets(text: str) -> tuple[str, list[int]]:
+    """Collapse whitespace runs to single spaces, tracking original offsets.
+
+    Returns (normalized_text, offsets) where offsets[i] is the index in the
+    original *text* corresponding to normalized_text[i] (plus a trailing
+    sentinel offsets[len(normalized_text)] == len(text)), so a match found in
+    normalized space can be mapped back to the original text's coordinates.
+    """
+    chars: list[str] = []
+    offsets: list[int] = []
+    prev_was_space = False
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            if not prev_was_space:
+                chars.append(" ")
+                offsets.append(i)
+            prev_was_space = True
+        else:
+            chars.append(ch)
+            offsets.append(i)
+            prev_was_space = False
+    offsets.append(len(text))
+    return "".join(chars), offsets
+
+
+def _find_phrase_spans(text: str, phrases: list[str]) -> list[tuple[int, int]]:
+    """Return non-overlapping (start, end) spans in *text* matching any *phrase*.
+
+    Matching is whitespace-tolerant (a run of spaces/newlines in the phrase
+    matches any run of whitespace in the text) -- required/suggested text is
+    occasionally re-flowed with slightly different spacing by the time it
+    reaches the final draft, and an exact-substring match would otherwise
+    silently drop the whole phrase instead of just tolerating the drift.
+    Longer matches win when candidate spans overlap (e.g. a short phrase that
+    happens to be a substring of a longer one also present in the list).
+    """
+    normalized_text, offsets = _normalize_whitespace_with_offsets(text)
+
+    candidates: list[tuple[int, int]] = []
+    for phrase in phrases:
+        p = " ".join(phrase.split())
+        if not p:
+            continue
+        start = 0
+        while True:
+            idx = normalized_text.find(p, start)
+            if idx == -1:
+                break
+            candidates.append((offsets[idx], offsets[idx + len(p)]))
+            start = idx + 1
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda span: (-(span[1] - span[0]), span[0]))
+    occupied = bytearray(len(text))
+    accepted: list[tuple[int, int]] = []
+    for start, end in candidates:
+        if any(occupied[start:end]):
+            continue
+        accepted.append((start, end))
+        occupied[start:end] = bytes([1]) * (end - start)
+
+    accepted.sort()
+    return accepted
+
+
+def _categorize_spans(
+    text: str, required_phrases: list[str], suggested_phrases: list[str]
+) -> list[tuple[int, int, str]]:
+    """Return sorted, non-overlapping (start, end, category) spans over *text*.
+
+    category is "required" or "suggested". Required always wins where the two
+    would overlap -- required wording must never be recoloured as suggested.
+    Gaps between returned spans are AI-generated content (handled by the caller).
+    """
+    required_spans = _find_phrase_spans(text, required_phrases)
+    suggested_spans = _find_phrase_spans(text, suggested_phrases)
+
+    occupied = bytearray(len(text))
+    for start, end in required_spans:
+        occupied[start:end] = bytes([1]) * (end - start)
+
+    spans = [(start, end, "required") for start, end in required_spans]
+    for start, end in suggested_spans:
+        if any(occupied[start:end]):
+            continue
+        spans.append((start, end, "suggested"))
+
+    spans.sort()
+    return spans
 
 
 def _add_partial_notes(doc: Document, notes: str) -> None:
@@ -803,6 +1053,22 @@ def _add_validation_annotation(doc: Document, ext: ExtractionResult) -> None:
     r.font.color.rgb = _ANNOTATION_GREY
 
 
+def _add_draft_section_instruction(doc: Document, var: TemplateVariable) -> None:
+    """Grey italic study-team note under the status line for selected sections."""
+    text = _DRAFT_INSTRUCTION_BY_SECTION.get(var.section_id, "").strip()
+    if not text:
+        return
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run(text)
+    r.font.name = _FONT
+    r.font.size = Pt(_ANNOTATION_PT)
+    r.italic = True
+    r.font.color.rgb = _ANNOTATION_GREY
+
+
 def _add_validation_placeholder(
     doc: Document,
     ext: ExtractionResult | None,
@@ -815,7 +1081,7 @@ def _add_validation_placeholder(
 
     # Co-Investigators: surface the UHN disclaimer (instructions) before suggested text
     # so the study team sees that listing co-investigators is generally discouraged.
-    if var is not None and var.section_id in ("2.4", "7") and (var.instructions or "").strip():
+    if var is not None and var.section_id == "2.4" and (var.instructions or "").strip():
         p_inst = doc.add_paragraph()
         p_inst.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p_inst.paragraph_format.space_before = Pt(2)
@@ -888,13 +1154,17 @@ def _write_validation_body(
         if var.heading != last_heading:
             if last_heading is not None:
                 _add_blank(doc)
-            _add_heading(doc, var.heading, color=None)
+            heading_required = _any_required(variables, heading=var.heading)
+            _add_heading(doc, var.heading, color=_heading_color(heading_required))
             last_heading = var.heading
             last_sub_section = None
 
         # ---- Sub-section -------------------------------------------------------
         if var.sub_section and var.sub_section != last_sub_section:
-            _add_subsection_heading(doc, var.sub_section, color=None)
+            sub_required = _any_required(
+                variables, heading=var.heading, sub_section=var.sub_section
+            )
+            _add_subsection_heading(doc, var.sub_section, color=_heading_color(sub_required))
             last_sub_section = var.sub_section
         elif not var.sub_section:
             last_sub_section = None
@@ -909,9 +1179,13 @@ def _write_validation_body(
         ):
             _add_validation_annotation(doc, ext)
 
+        # ---- Study-team draft instruction (selected sections only) -------------
+        _add_draft_section_instruction(doc, var)
+
         # ---- Content -----------------------------------------------------------
         if content:
-            _add_content_block(doc, content, color=None, highlight_markers=True)
+            required_phrases, suggested_phrases = _template_phrase_sources(var, content)
+            _add_content_block(doc, content, required_phrases, suggested_phrases)
             if ext is not None and ext.status == "PARTIAL" and ext.notes:
                 _add_partial_notes(doc, ext.notes)
         else:
@@ -932,13 +1206,13 @@ def _write_signature_pages(
 ) -> None:
     doc.add_page_break()
 
-    # TITLE line: "TITLE:" (plain) + " [title]" (bold) — matches approved ICF
+    # TITLE line: "TITLE:" (plain) + " [title]" (bold) — left-aligned, 9 pt
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(0)
-    _run(p, "TITLE:", bold=False)
-    _run(p, " " + study_title, bold=True)
+    _run(p, "TITLE:", bold=False, size=9)
+    _run(p, " " + study_title, bold=True, size=9)
 
     _add_blank(doc)
     _add_blank(doc)
@@ -949,13 +1223,15 @@ def _write_signature_pages(
     p.paragraph_format.space_after = Pt(0)
     _run(p, "CONSENT")
 
+    # Consent bullets sit flush with the CONSENT heading (no list indent);
+    # extra space after the bullet glyph for readability.
     consent_items = resolve_signature_consent_bullets(ext_map or {}, sdm=sdm)
     for item in consent_items:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Cm(0.63)
-        p.paragraph_format.first_line_indent = Cm(-0.63)
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.left_indent = Cm(0)
+        p.paragraph_format.first_line_indent = Cm(0)
         _run(p, "\u2022  " + item)
 
     # Blank spacers before signature blocks
@@ -1110,10 +1386,11 @@ def _run(
     bold: bool = False,
     underline: bool = False,
     color: RGBColor | None = None,
+    size: float | None = None,
 ) -> None:
     r = para.add_run(text)
     r.font.name = _FONT
-    r.font.size = Pt(_BODY_PT)
+    r.font.size = Pt(size if size is not None else _BODY_PT)
     r.bold = bold
     r.underline = underline
     if color is not None:
@@ -1154,7 +1431,14 @@ def _add_heading(doc: Document, text: str, color: RGBColor | None = None) -> Non
 def _add_subsection_heading(
     doc: Document, text: str, color: RGBColor | None = None
 ) -> None:
-    """Bold sub-section heading (e.g., 'Non-Experimental Procedures')."""
+    """Sub-section heading.
+
+    Plain names (e.g. 'Non-Experimental Procedures') render as bold black.
+    Angle-bracket labels (e.g. '<Repositories or database studies>') are
+    conditional blocks from the source template, not true headings — render
+    them as bold grey italic, preserving the surrounding ``<...>``.
+    """
+    is_conditional_label = text.startswith("<") and text.endswith(">") and len(text) > 2
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.space_before = Pt(3)
@@ -1163,7 +1447,10 @@ def _add_subsection_heading(
     r.font.name = _FONT
     r.font.size = Pt(_BODY_PT)
     r.bold = True
-    if color is not None:
+    if is_conditional_label:
+        r.italic = True
+        r.font.color.rgb = _ANNOTATION_GREY
+    elif color is not None:
         r.font.color.rgb = color
 
 
@@ -1210,14 +1497,16 @@ def _parse_markdown_table(table_text: str) -> list[list[str]]:
 def _add_table_block(
     doc: Document,
     rows: list[list[str]],
-    color: RGBColor | None = None,
-    highlight_markers: bool = False,
+    required_phrases: list[str],
+    suggested_phrases: list[str],
 ) -> None:
     """Insert a bordered Word table from parsed Markdown rows.
 
-    The first row is rendered as a bold header with light-grey shading.
-    When *highlight_markers* is True, ``[PLEASE COMPLETE]`` in cell text is
-    bold yellow (same as body paragraphs).
+    The first row is rendered as a bold header with light-grey shading and no
+    colour-coding (headers are structural labels, not drafted content). Data
+    rows are colour-coded the same way as body text (see _add_text_runs) --
+    tables in this pipeline are almost always AI-generated schedules, so most
+    cell content ends up highlighted yellow, which is correct.
     """
     if not rows:
         return
@@ -1235,9 +1524,9 @@ def _add_table_block(
             _add_table_cell_runs(
                 para,
                 cell_text,
-                color=color,
-                highlight_markers=highlight_markers,
-                bold_all=is_header,
+                required_phrases=required_phrases,
+                suggested_phrases=suggested_phrases,
+                is_header=is_header,
             )
             if is_header:
                 tc_pr = cell._tc.get_or_add_tcPr()
@@ -1252,77 +1541,107 @@ def _add_table_block(
     _add_blank(doc)
 
 
+def _render_ai_generated_segment(p, text: str, font_size: Pt) -> None:
+    """Render one AI-generated (uncategorized) segment, splitting out edit markers.
+
+    [PLEASE COMPLETE] keeps its existing bold-yellow treatment so it still
+    stands out from ordinary AI-drafted prose (also yellow, but not bold).
+    A segment that is pure whitespace (e.g. the single space separating two
+    adjacent required/suggested phrase matches) is incidental, not content the
+    AI wrote -- render it plain so a lone highlighted space doesn't appear in
+    the middle of otherwise-locked text.
+    """
+    if not text.strip():
+        r = p.add_run(text)
+        r.font.name = _FONT
+        r.font.size = font_size
+        return
+
+    if not (MARKER_PLEASE_COMPLETE in text or MARKER_ADD_OTHER_ORGS in text) or not (
+        _INLINE_MARKER_RE.search(text)
+    ):
+        r = p.add_run(text)
+        r.font.name = _FONT
+        r.font.size = font_size
+        r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        return
+
+    for part in _INLINE_MARKER_RE.split(text):
+        if not part:
+            continue
+        r = p.add_run(part)
+        r.font.name = _FONT
+        r.font.size = font_size
+        if part == MARKER_PLEASE_COMPLETE:
+            r.bold = True
+            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        elif part == MARKER_ADD_OTHER_ORGS:
+            r.italic = True
+            r.font.color.rgb = _ANNOTATION_GREY
+        else:
+            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+
+def _add_categorized_runs(
+    p,
+    text: str,
+    required_phrases: list[str],
+    suggested_phrases: list[str],
+    font_size: Pt,
+) -> None:
+    """Append runs to *p*, colour-coding *text* by provenance.
+
+    Required template wording renders in the document's default black,
+    suggested template wording that was kept renders in blue (#0563C1), and
+    everything else -- content the AI wrote or filled in itself, including
+    edit markers -- is highlighted yellow. Shared by body paragraphs and
+    table cells (different font sizes only).
+    """
+    spans = _categorize_spans(text, required_phrases, suggested_phrases)
+    pos = 0
+    for start, end, category in spans:
+        if start > pos:
+            _render_ai_generated_segment(p, text[pos:start], font_size)
+        run_text = text[start:end]
+        r = p.add_run(run_text)
+        r.font.name = _FONT
+        r.font.size = font_size
+        if category == "suggested":
+            r.font.color.rgb = _SUGGESTED_TEXT_BLUE
+        pos = end
+    if pos < len(text):
+        _render_ai_generated_segment(p, text[pos:], font_size)
+
+
 def _add_table_cell_runs(
     p,
     text: str,
     *,
-    color: RGBColor | None,
-    highlight_markers: bool,
-    bold_all: bool,
+    required_phrases: list[str],
+    suggested_phrases: list[str],
+    is_header: bool,
 ) -> None:
-    """Write cell text, highlighting inline ``[PLEASE COMPLETE]`` when requested."""
+    """Write cell text. Header cells are plain bold labels (no colour-coding);
+    data cells are colour-coded by provenance like body text."""
     font_size = Pt(_BODY_PT - 1)
-    if highlight_markers and MARKER_PLEASE_COMPLETE in text and _INLINE_MARKER_RE.search(text):
-        for part in _INLINE_MARKER_RE.split(text):
-            if not part:
-                continue
-            r = p.add_run(part)
-            r.font.name = _FONT
-            r.font.size = font_size
-            if part == MARKER_PLEASE_COMPLETE:
-                r.bold = True
-                r.font.highlight_color = WD_COLOR_INDEX.YELLOW
-            else:
-                r.bold = bold_all
-                if color is not None:
-                    r.font.color.rgb = color
+    if is_header:
+        r = p.add_run(text)
+        r.font.name = _FONT
+        r.font.size = font_size
+        r.bold = True
         return
 
-    r = p.add_run(text)
-    r.font.name = _FONT
-    r.font.size = font_size
-    r.bold = bold_all
-    if color is not None:
-        r.font.color.rgb = color
+    _add_categorized_runs(p, text, required_phrases, suggested_phrases, font_size)
 
 
 def _add_text_runs(
     p,
     text: str,
-    color: RGBColor | None,
-    highlight_markers: bool,
+    required_phrases: list[str],
+    suggested_phrases: list[str],
 ) -> None:
-    """Append runs to *p*, styling known inline edit markers."""
-    if (highlight_markers and MARKER_PLEASE_COMPLETE in text) or MARKER_ADD_OTHER_ORGS in text:
-        if _INLINE_MARKER_RE.search(text):
-            for part in _INLINE_MARKER_RE.split(text):
-                if not part:
-                    continue
-                if part == MARKER_PLEASE_COMPLETE and highlight_markers:
-                    r = p.add_run(part)
-                    r.font.name = _FONT
-                    r.font.size = Pt(_BODY_PT)
-                    r.bold = True
-                    r.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                elif part == MARKER_ADD_OTHER_ORGS:
-                    r = p.add_run(part)
-                    r.font.name = _FONT
-                    r.font.size = Pt(_BODY_PT)
-                    r.italic = True
-                    r.font.color.rgb = _ANNOTATION_GREY
-                else:
-                    r = p.add_run(part)
-                    r.font.name = _FONT
-                    r.font.size = Pt(_BODY_PT)
-                    if color is not None:
-                        r.font.color.rgb = color
-            return
-
-    r = p.add_run(text)
-    r.font.name = _FONT
-    r.font.size = Pt(_BODY_PT)
-    if color is not None:
-        r.font.color.rgb = color
+    """Append runs to *p*, colour-coding by provenance (see _add_categorized_runs)."""
+    _add_categorized_runs(p, text, required_phrases, suggested_phrases, Pt(_BODY_PT))
 
 
 def _parse_bullet_line(line: str) -> tuple[int, str] | None:
@@ -1350,25 +1669,23 @@ def _parse_bullet_line(line: str) -> tuple[int, str] | None:
 def _add_content_block(
     doc: Document,
     text: str,
-    color: RGBColor | None = None,
-    highlight_markers: bool = False,
+    required_phrases: list[str],
+    suggested_phrases: list[str],
 ) -> None:
     """Write a block of extracted content, splitting on newlines.
 
     Segments containing Markdown tables (lines starting with |) are rendered
     as proper Word tables.  Bullet lines become indented list items, with
     nested / ``o`` sub-bullets indented one level deeper.  All other lines are
-    rendered as body paragraphs.
-    *color* colours all runs when provided (confidence colour-coding).
-    *highlight_markers* highlights ``[PLEASE COMPLETE]`` in bold yellow within the text.
+    rendered as body paragraphs, colour-coded by provenance (see
+    _add_categorized_runs): required text black, suggested text blue, anything
+    else -- AI-drafted content, including ``[PLEASE COMPLETE]`` -- yellow.
     """
     for kind, segment in _split_content(text):
         if kind == "table":
             rows = _parse_markdown_table(segment)
             if rows:
-                _add_table_block(
-                    doc, rows, color=color, highlight_markers=highlight_markers
-                )
+                _add_table_block(doc, rows, required_phrases, suggested_phrases)
                 continue
         # Plain text — render line by line (preserve leading whitespace for nest level)
         for line in segment.split("\n"):
@@ -1378,20 +1695,21 @@ def _add_content_block(
             if bullet is not None:
                 level, content = bullet
                 glyph = _BULLET_GLYPHS[level]
-                left_cm = _BULLET_BASE_INDENT_CM + (level * _BULLET_NEST_STEP_CM)
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(2)
-                p.paragraph_format.left_indent = Cm(left_cm)
-                p.paragraph_format.first_line_indent = Cm(-_BULLET_HANGING_CM)
-                _add_text_runs(p, f"{glyph} {content}", color, highlight_markers)
+                _apply_bullet_paragraph_format(p, level=level)
+                # Glyph is a structural marker, not drafted content -- render it
+                # plain so it isn't swept into the "gap" and highlighted yellow.
+                glyph_run = p.add_run(f"{glyph} ")
+                glyph_run.font.name = _FONT
+                glyph_run.font.size = Pt(_BODY_PT)
+                _add_text_runs(p, content, required_phrases, suggested_phrases)
             else:
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(3)
-                _add_text_runs(p, line.strip(), color, highlight_markers)
+                p.paragraph_format.space_after = Pt(2)
+                _add_text_runs(p, line.strip(), required_phrases, suggested_phrases)
 
 
 def _set_table_borders_none(table) -> None:
@@ -1478,32 +1796,51 @@ def _sig_three_column_block(
 
 
 def _sig_sdm_participant_printed_name_row(doc: Document) -> None:
-    """SDM-only row: prompt on the left, participant printed-name line in the middle."""
+    """SDM-only row: prompt on the left; printed-name line under the middle underline.
+
+    Uses the same 3-column widths as ``_sig_three_column_block`` so the underline
+    and label line up with the PRINTED NAME column above. The underline cell is
+    bottom-aligned so a wrapping prompt in the left cell does not leave a gap
+    between the line and its label. Middle column is slightly wider so
+    "PRINTED NAME of Participant" stays on one line.
+    """
     table = doc.add_table(rows=2, cols=3)
     table.autofit = False
     _set_table_borders_none(table)
 
-    col_widths = (Inches(2.35), Inches(2.05), Inches(1.35))
+    # Match the signature block above, with a bit more width on the middle
+    # column so the participant printed-name label does not wrap.
+    col_widths = (Inches(2.2), Inches(2.4), Inches(1.15))
     for row in table.rows:
         for ci, width in enumerate(col_widths):
             row.cells[ci].width = width
 
     prompt_cell = table.rows[0].cells[0]
+    prompt_cell.vertical_alignment = WD_ALIGN_VERTICAL.BOTTOM
+    _set_cell_margins(prompt_cell, top=0, bottom=0)
     prompt_p = prompt_cell.paragraphs[0]
     prompt_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     prompt_p.paragraph_format.space_before = Pt(6)
+    prompt_p.paragraph_format.space_after = Pt(0)
     _run(prompt_p, "If consent is provided by Substitute Decision Maker:")
 
     ul_cell = table.rows[0].cells[1]
+    ul_cell.vertical_alignment = WD_ALIGN_VERTICAL.BOTTOM
+    _set_cell_margins(ul_cell, top=0, bottom=0)
     ul_p = ul_cell.paragraphs[0]
     ul_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     ul_p.paragraph_format.space_before = Pt(6)
     ul_p.paragraph_format.space_after = Pt(0)
-    _set_cell_margins(ul_cell, bottom=0)
     _run(ul_p, "______________________")
 
+    # Keep date column empty but margin-tight so row height stays minimal.
+    _set_cell_margins(table.rows[0].cells[2], top=0, bottom=0)
+    _set_cell_margins(table.rows[1].cells[0], top=0, bottom=0)
+    _set_cell_margins(table.rows[1].cells[2], top=0, bottom=0)
+
     label_cell = table.rows[1].cells[1]
-    _set_cell_margins(label_cell, top=0)
+    label_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+    _set_cell_margins(label_cell, top=0, bottom=0)
     _add_sig_label_lines(label_cell, ["PRINTED NAME of Participant"])
 
     _add_blank(doc)

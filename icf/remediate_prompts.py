@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 
 from icf.plain_language import PLAIN_LANGUAGE_SCOPE, UHN_PLAIN_LANGUAGE_GUIDELINES
+from icf.runtime_injections import runtime_locked_phrases
 from icf.types import GlobalFixRule, ReviewFlag, TemplateVariable
 
 # ---------------------------------------------------------------------------
@@ -118,14 +119,35 @@ def _literal_choice_phrases_from_text(text: str) -> list[str]:
     return phrases
 
 
+def _normalize_ws(text: str) -> str:
+    """Collapse whitespace runs to single spaces for drift-tolerant comparison.
+
+    Final drafts occasionally re-flow required/suggested text with slightly
+    different spacing (e.g. an extra space after a period) than the source
+    template. An exact substring check would treat that as "phrase missing"
+    and silently drop it -- from scoring which option branch was used, and
+    from the locked-phrase list remediation checks survive verbatim -- even
+    though the wording itself is untouched.
+    """
+    return " ".join(text.split())
+
+
 def _select_option_body(required_text: str, filled_template: str) -> str | None:
     """Pick the mutually exclusive option branch that best matches the draft."""
     bodies = _partition_exclusive_option_bodies(required_text)
     if not bodies:
         return None
 
+    normalized_draft = _normalize_ws(filled_template)
     scored = [
-        (body, sum(1 for p in _literal_phrases_from_text(body) if p in filled_template))
+        (
+            body,
+            sum(
+                1
+                for p in _literal_phrases_from_text(body)
+                if _normalize_ws(p) in normalized_draft
+            ),
+        )
         for body in bodies
     ]
     best_score = max(score for _, score in scored)
@@ -158,9 +180,10 @@ def extract_locked_phrases(
       1. Mutually exclusive ``<<Option N: ...>>`` / ``<<OPTION X: ...>>`` blocks
          are resolved to the branch whose literals appear in the draft (fixes
          sections like Health Canada Option 1 vs Option 2).
-      2. Any phrase not present as a substring of the draft is dropped, so locks
-         from unused template branches (or unused closed-choice alternatives)
-         never block remediation.
+      2. Any phrase not present (whitespace differences ignored -- see
+         _normalize_ws) as a substring of the draft is dropped, so locks from
+         unused template branches (or unused closed-choice alternatives) never
+         block remediation.
     """
     if not required_text or not required_text.strip():
         return []
@@ -177,7 +200,8 @@ def extract_locked_phrases(
     phrases.extend(_literal_choice_phrases_from_text(scope))
 
     if filled_template and filled_template.strip():
-        phrases = [p for p in phrases if p in filled_template]
+        normalized_draft = _normalize_ws(filled_template)
+        phrases = [p for p in phrases if _normalize_ws(p) in normalized_draft]
 
     # Preserve order, drop duplicates.
     seen: set[str] = set()
@@ -187,6 +211,25 @@ def extract_locked_phrases(
             seen.add(phrase)
             unique.append(phrase)
     return unique
+
+
+def collect_section_locked_phrases(
+    var: TemplateVariable,
+    filled_template: str,
+) -> list[str]:
+    """Union of locked phrases from required_text, suggested_text, and runtime injections.
+
+    Runtime-only verbatim blocks (e.g. the SDM intro paragraph) are included when
+    present in the draft — they are not stored in the registry templates.
+    """
+    phrases = extract_locked_phrases(var.required_text, filled_template)
+    for p in extract_locked_phrases(var.suggested_text, filled_template):
+        if p not in phrases:
+            phrases.append(p)
+    for p in runtime_locked_phrases(var, filled_template):
+        if p not in phrases:
+            phrases.append(p)
+    return phrases
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +362,16 @@ _PATCH_SYSTEM = (
     "introduce the term once as Full Term (ABB) and use the abbreviation alone for "
     "any later mentions in the same section. If this section is a later occurrence, "
     "use the abbreviation alone and remove any redundant full-term expansions.\n"
+    "  7b. Term-gloss rules (gloss_term) are DOCUMENT-WIDE for stubborn terms like "
+    "placebo and washout. If the rule says this section holds the first explanation, "
+    "keep a short parenthetical gloss on the first mention and use the bare term after. "
+    "If the rule says the term was already explained earlier, remove the parenthetical "
+    "gloss here and use the bare term alone.\n"
+    "  7c. Unless a gloss_term rule for this section explicitly asks you to ADD a "
+    "parenthetical explanation for placebo or washout, do not introduce one while "
+    "applying other fixes (terminology, route wording, plain language, etc.). Use the "
+    "bare term alone — a later deterministic pass strips redundant glosses, but "
+    "avoiding re-glossing keeps wording consistent.\n"
     "  8. For PLAIN_LANGUAGE_VIOLATION flags without a suggested replacement, "
     "simplify jargon in the flagged span using the guidelines above while keeping "
     "required wording fragments intact.\n"
@@ -334,6 +387,11 @@ _PATCH_SYSTEM = (
     "flag-by-flag): fix any redundancy, broken transitions, or leftover sentences your "
     "edits created, while preserving every fact and every phrase listed in 'Required "
     "wording' unchanged.\n"
+    "  10. NEVER reword, paraphrase, or remove a [PLEASE COMPLETE] marker, even if it falls "
+    "inside a flagged span or a sentence you are otherwise rewriting for plain language. It "
+    "is a literal placeholder the assembly step detects by exact text, not prose to polish -- "
+    "copy it verbatim wherever it appears. Do not invent an alternative bracketed placeholder "
+    "(e.g. '[TO BE FILLED MANUALLY]', '[complete X]') under any circumstances.\n"
 )
 
 

@@ -69,7 +69,13 @@ NAIVE_SYSTEM_PROMPT = (
     "  • Every evidence quote must be a verbatim substring from the protocol text.\n"
     "  • The 'filled_template' must be clean ICF prose — no template markers remaining.\n"
     "  • If only partial information is found, use status='PARTIAL' and note what is missing.\n"
-    "  • For unfillable placeholders, write [PLEASE COMPLETE] — never explain why.\n\n"
+    "  • For unfillable placeholders, write [PLEASE COMPLETE] — never explain why. This is the "
+    "ONLY accepted placeholder string, and it applies just as much to a single {{placeholder}} "
+    "buried inside an otherwise-complete sentence as to a whole missing section — never invent "
+    "a descriptive substitute that echoes the missing field's name (e.g. '[complete time]' or "
+    "'[TO BE FILLED MANUALLY]' for an unfillable {{length of time}}). Example: if {{length of "
+    "time}} is not stated, write 'The procedure will take about [PLEASE COMPLETE].' — never a "
+    "paraphrased placeholder.\n\n"
     "UHN PLAIN LANGUAGE GUIDELINES — apply these when generating any text:\n"
     + PLAIN_LANGUAGE_SCOPE
     + UHN_PLAIN_LANGUAGE_GUIDELINES

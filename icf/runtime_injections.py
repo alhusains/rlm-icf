@@ -113,6 +113,25 @@ def is_sdm_intro_section(var: TemplateVariable) -> bool:
     return var.section_id == SDM_INTRO_SECTION_ID
 
 
+def runtime_locked_phrases(var: TemplateVariable, filled_template: str) -> list[str]:
+    """Verbatim runtime-injected paragraphs that must survive review/remediation.
+
+    These are not stored in registry required_text/suggested_text — they come
+    only from runtime injections (e.g. the SDM opening paragraph in section 3).
+    Include a phrase only when it is already present in the draft, so unused
+    conditionals never block editing.
+    """
+    if not filled_template or not filled_template.strip():
+        return []
+    phrases: list[str] = []
+    if is_sdm_intro_section(var):
+        normalized_draft = " ".join(filled_template.split())
+        normalized_sdm = " ".join(SDM_OPENING_PARAGRAPH.split())
+        if normalized_sdm in normalized_draft:
+            phrases.append(SDM_OPENING_PARAGRAPH)
+    return phrases
+
+
 def is_sdm_signature_consent_section(var: TemplateVariable) -> bool:
     return var.section_id == SIGNATURE_CONSENT_SECTION_ID and (
         var.sub_section or ""

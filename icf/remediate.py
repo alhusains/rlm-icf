@@ -13,9 +13,10 @@ After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
 
           A deterministic, regex-based scan (icf/abbreviations.py) separately
           adds GlobalFixRules for redundant, out-of-order, or orphaned/garbled
-          abbreviation definitions -- this is the ONLY source of
-          define_abbreviation rules, since it is the only pass that sees the
-          whole final document at once and can decide placement consistently.
+          abbreviation definitions (define_abbreviation) and for redundant
+          placebo/washout parenthetical glosses (gloss_term) -- these are the
+          ONLY sources of those rule types, since only a whole-document scan
+          can decide first-use placement consistently.
 
   Pass B  One LLM call per affected section to patch the filled_template:
             - addresses all HIGH flags for that section
@@ -25,6 +26,11 @@ After Stage 8 review produces ReviewFlags, RemediationEngine runs two passes:
             1. They contain at least one remediable ReviewFlag (HIGH always;
                MEDIUM only when issue_type is whitelisted or suggested_fix is set).
             2. They appear in the affected_section_ids of a non-note_only rule.
+
+  Pass C  Deterministic post-pass (``apply_term_gloss_consistency``) that strips
+          any redundant placebo/washout parenthetical glosses left or re-introduced
+          by Pass B. LLM patches for other rules often re-gloss the term while
+          rewriting; this mechanical keep-earliest strip is the backstop.
 
   After each patch attempt, a programmatic safety check verifies that all
   literal phrases from required_text AND suggested_text survive verbatim.  If
@@ -48,11 +54,16 @@ import copy
 import json
 import re
 
-from icf.abbreviations import find_abbreviation_fixes
+from icf.abbreviations import (
+    apply_term_gloss_consistency,
+    find_abbreviation_fixes,
+    find_term_gloss_fixes,
+)
+from icf.clean_icf import MARKER_PLEASE_COMPLETE
 from icf.remediate_prompts import (
     build_global_rules_prompt,
     build_patch_prompt,
-    extract_locked_phrases,
+    collect_section_locked_phrases,
 )
 from icf.types import (
     ExtractionResult,
@@ -88,13 +99,12 @@ def _is_remediation_locked(section_id: str) -> bool:
 
 
 def _locked_phrases_for(var: TemplateVariable, current_text: str) -> list[str]:
-    """Literal phrases from required_text AND suggested_text that must survive
-    verbatim in the patched output (order-preserving union)."""
-    phrases = extract_locked_phrases(var.required_text, current_text)
-    for p in extract_locked_phrases(var.suggested_text, current_text):
-        if p not in phrases:
-            phrases.append(p)
-    return phrases
+    """Literal phrases that must survive verbatim in the patched output.
+
+    Includes required_text, suggested_text, and runtime-injected verbatim
+    blocks (e.g. the SDM opening paragraph in section 3).
+    """
+    return collect_section_locked_phrases(var, current_text)
 
 
 def _is_remediable_medium(flag: ReviewFlag) -> bool:
@@ -155,10 +165,8 @@ class RemediationEngine:
         # -- Pass A: extract document-wide fix rules ----------------------
         global_rules = self._extract_global_rules(review_result, variables)
 
-        # Deterministic document-wide abbreviation check -- catches redundant
-        # or out-of-order abbreviation definitions across sections regardless
-        # of whether Stage 8 review happened to flag them (see abbreviations.py
-        # for why this needs to be mechanical rather than LLM-detected).
+        # Deterministic document-wide abbreviation + stubborn-term gloss checks
+        # (see abbreviations.py) -- first reading-order occurrence wins.
         abbreviation_fixes = find_abbreviation_fixes(extractions, variables)
         if abbreviation_fixes and self.verbose:
             print(f"[REMEDIATE] Abbreviation check: {len(abbreviation_fixes)} fix(es) needed.")
@@ -169,6 +177,18 @@ class RemediationEngine:
                 affected_section_ids=[fix.section_id],
             )
             for fix in abbreviation_fixes
+        )
+
+        term_gloss_fixes = find_term_gloss_fixes(extractions, variables)
+        if term_gloss_fixes and self.verbose:
+            print(f"[REMEDIATE] Term-gloss check: {len(term_gloss_fixes)} fix(es) needed.")
+        global_rules.extend(
+            GlobalFixRule(
+                rule_type="gloss_term",
+                description=fix.instruction,
+                affected_section_ids=[fix.section_id],
+            )
+            for fix in term_gloss_fixes
         )
 
         actionable_rules = [r for r in global_rules if r.rule_type != "note_only"]
@@ -298,6 +318,44 @@ class RemediationEngine:
             if self.verbose:
                 print(f"[REMEDIATE] Patched section {section_id} OK.")
 
+        # -- Pass C: deterministic stubborn-term gloss strip --------------
+        # Runs after LLM patches so glosses re-introduced by terminology /
+        # route / plain-language rewrites are still collapsed to one earliest
+        # explanation. See apply_term_gloss_consistency docstring.
+        gloss_changes = apply_term_gloss_consistency(patched_extractions, variables)
+        if gloss_changes:
+            if self.verbose:
+                print(
+                    f"[REMEDIATE] Term-gloss post-pass: stripped redundant "
+                    f"gloss(es) in {len(gloss_changes)} section(s)."
+                )
+            for section_id, before, after in gloss_changes:
+                records.append(
+                    RemediationRecord(
+                        section_id=section_id,
+                        high_flag_count=0,
+                        global_rules_applied=[
+                            "Deterministic post-pass: keep only the earliest "
+                            "placebo/washout parenthetical gloss in the document; "
+                            "strip later re-explanations."
+                        ],
+                        original_text=before,
+                        patched_text=after,
+                        success=True,
+                        notes="apply_term_gloss_consistency",
+                    )
+                )
+                global_rules.append(
+                    GlobalFixRule(
+                        rule_type="gloss_term",
+                        description=(
+                            "Deterministic post-pass stripped a redundant "
+                            f"placebo/washout gloss in section {section_id}."
+                        ),
+                        affected_section_ids=[section_id],
+                    )
+                )
+
         return patched_extractions, RemediationResult(
             records=records,
             global_rules=global_rules,
@@ -402,6 +460,11 @@ class RemediationEngine:
 
             raw = raw.strip()
             missing = [p for p in locked_phrases if p not in raw]
+            # A [PLEASE COMPLETE] marker must never be reworded away by a patch;
+            # treat a drop in its count the same as a dropped locked phrase so it
+            # flows through the same corrective-retry / rejection path below.
+            if raw.count(MARKER_PLEASE_COMPLETE) < filled_template.count(MARKER_PLEASE_COMPLETE):
+                missing.append(MARKER_PLEASE_COMPLETE)
             if not missing:
                 return raw, ""
 
