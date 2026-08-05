@@ -57,6 +57,9 @@ ICF_SHAREPOINT_URL = os.environ.get(
     "ICF_SHAREPOINT_URL",
     "https://universityhealthnetwork.sharepoint.com/sites/AIHub/SitePages/AI-ICF.aspx",
 )
+UHN_TEMPLATES_URL = (
+    "https://intranet.uhnresearch.ca/service/documents-and-forms"
+)
 SUPPORT_EMAIL = os.environ.get("ICF_SUPPORT_EMAIL", "AIHub@uhn.ca")
 EMAIL_ENABLED = bool(ACS_CONNECTION_STRING and ACS_SENDER_ADDRESS)
 
@@ -90,6 +93,8 @@ IMPORTANT REMINDERS:
 
 • Ensure all instructional and placeholder text (highlighted text and text in grey italics) is removed before submitting into CAPCR for REB approval.
 
+• Please use the UHN consent form templates as a reference for formatting and required content: {UHN_TEMPLATES_URL}
+
 NEED HELP?
 Visit the AI-ICF SharePoint page ({ICF_SHAREPOINT_URL}) for guidance, FAQs, and additional resources, or contact {SUPPORT_EMAIL} if you have questions or need support.
 
@@ -122,7 +127,8 @@ AI-ICF Tool Project Team
 
   <ul style="margin: 0 0 16px 0; padding-left: 22px;">
     <li style="margin-bottom: 12px;">This is an AI-generated draft intended to support the consent form development process. All content must be carefully reviewed and validated by the study team before submission into CAPCR for REB approval.</li>
-    <li style="margin-bottom: 0;">Ensure all instructional and placeholder text (highlighted text and text in grey italics) is removed before submitting into CAPCR for REB approval.</li>
+    <li style="margin-bottom: 12px;">Ensure all instructional and placeholder text (highlighted text and text in grey italics) is removed before submitting into CAPCR for REB approval.</li>
+    <li style="margin-bottom: 0;">Please use the UHN consent form templates as a reference for formatting and required content: <a href="{UHN_TEMPLATES_URL}" style="color: #0563C1;">{UHN_TEMPLATES_URL}</a></li>
   </ul>
 
   <p style="margin: 24px 0 24px 0; font-weight: bold;">Need Help? Visit the <a href="{ICF_SHAREPOINT_URL}" style="color: #0563C1; font-weight: bold;">AI-ICF SharePoint page</a> for guidance, FAQs, and additional resources, or contact <a href="mailto:{SUPPORT_EMAIL}" style="color: #0563C1; font-weight: bold;">{SUPPORT_EMAIL}</a> if you have questions or need support.</p>
