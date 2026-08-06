@@ -214,6 +214,45 @@ Re-run post-processing on an existing report without re-extraction:
 python run_remediation_only.py --report output/extraction_report_rlm_Prot_000.json
 ```
 
+### Consistency evaluation
+
+Two local CLIs measure how stable outputs are across repeated runs of the same protocol (same seed / model). Neither is used by the production UI/worker.
+
+| Script | What it tests | Cost / runtime |
+|--------|---------------|----------------|
+| `run_consistency_eval.py` | Raw extraction only, **one section** at a time | Faster / cheaper |
+| `run_full_consistency_eval.py` | Full pipeline (extract → harmonize → review → remediate), all or selected sections | Slow / expensive; meant for unattended runs |
+
+Both write a JSON report; the full-pipeline script also writes a reviewer-friendly Word report.
+
+```bash
+# Single-section extraction consistency (e.g. section 3, 3 runs)
+python run_consistency_eval.py \
+    --protocol path/to/protocol.pdf \
+    --study-type standard \
+    --section 3 \
+    --runs 3 \
+    --backend azure_openai
+
+# Full-pipeline consistency across the whole protocol (or selected sections)
+python run_full_consistency_eval.py \
+    --protocol path/to/protocol.pdf \
+    --study-type standard \
+    --runs 3 \
+    --backend azure_openai
+
+# Background run with logs (recommended for full-pipeline eval)
+nohup python run_full_consistency_eval.py \
+    --protocol path/to/protocol.pdf \
+    --study-type standard \
+    --sections 3 5 8 \
+    > consistency_eval.log 2>&1 &
+```
+
+Useful flags (both scripts unless noted): `--registry` (instead of `--study-type`), `--model`, `--seed`, `--output-dir`, `--judge-model`. Full-pipeline only: `--skip-harmonize` / `--skip-review` / `--skip-remediation`, `--us-funded`, `--sdm`.
+
+Default output directory for the full-pipeline script is `<protocol_dir>/consistency_eval_<protocol_stem>/` (Word + JSON reports, plus per-run pipeline outputs under `pipeline_runs/`).
+
 ---
 
 ## Local web stack (UI + worker)
@@ -324,6 +363,8 @@ app.py                       # Streamlit UI (enqueue / poll / download)
 worker.py                    # Queue consumer — runs ICFPipeline
 run_pipeline.py              # Local/CLI pipeline entry point
 run_remediation_only.py      # Re-run harmonize/review/remediate from a JSON report
+run_consistency_eval.py      # Single-section extraction consistency eval
+run_full_consistency_eval.py # Full-pipeline consistency eval (Word + JSON report)
 deploy.sh                    # Initial Azure Container Apps deploy
 scripts/
   setup_azure_storage_worker.sh   # Queue, worker job, storage RBAC
@@ -341,6 +382,7 @@ icf/
   validate.py                # Quote / meta-commentary validation
   review.py                  # Plain-language review
   remediate.py               # Auto-remediation of review flags
+  consistency_eval.py        # Consistency metrics + Word report helpers
   assemble.py                # Marked-up DOCX + JSON report
   clean_icf.py               # Draft DOCX (UHN publication layout)
   types.py                   # Shared data types
